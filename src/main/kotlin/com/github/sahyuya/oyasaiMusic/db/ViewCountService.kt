@@ -1,0 +1,70 @@
+package com.github.sahyuya.oyasaiMusic.db
+
+import com.github.sahyuya.oyasaiMusic.model.Song
+import org.bukkit.Bukkit
+import org.bukkit.entity.Player
+import org.bukkit.plugin.Plugin
+
+/**
+ * 視聴回数カウントと視聴ポイント付与のロジック（データ・システム設計書 1-3章、
+ * UI/UX設計書 7章）を担当するサービス。
+ *
+ * 視聴1回としてカウントする条件（design doc 7章）:
+ *   1. AFK状態ではない（PlaceholderAPI経由で %essentials_afk% を参照。無い場合は常にfalse扱い）
+ *   2. 楽曲の総演奏時間の80%以上を聴き終えている（呼び出し側= [com.oyasai.music.audio.playback.PlaybackEngine]
+ *      の onListenThresholdReached コールバックで既に判定済み）
+ *   3. 同一プレイヤー・同一楽曲の再生が「1時間3回・1日10回」の制限内である
+ *   4. ジュークボックス（環境音）再生ではない（isAmbientPlaybackで呼び出し側が除外）
+ *
+ * 視聴ポイント（10回ごとに作者へ+1pt）は「収益化条件（参考URL登録 or 審査通過）」を
+ * 満たす楽曲のみ付与する（UI/UX設計書 7章）。総視聴回数(songs.views)自体は
+ * 収益化条件を問わず加算する。
+ */
+class ViewCountService(
+    private val plugin: Plugin,
+    private val songRepository: SongRepository,
+    private val userRepository: UserRepository,
+    private val socialRepository: SocialRepository,
+    private val hourLimit: Int,
+    private val dayLimit: Int,
+    private val viewsPerPoint: Int,
+) {
+
+    /**
+     * 視聴条件を満たした際に呼び出す。内部でDBアクセスを非同期化するため、
+     * 呼び出し元のスレッド（メインスレッド想定）をブロックしない。
+     */
+    fun registerView(player: Player, song: Song, isAmbientPlayback: Boolean) {
+        if (isAmbientPlayback) return
+        val songId = song.id ?: return
+        if (isAfk(player)) return
+
+        Bukkit.getScheduler().runTaskAsynchronously(
+            plugin,
+            Runnable {
+                val nowSeconds = System.currentTimeMillis() / 1000
+                val hourCount = socialRepository.countViewsSince(player.uniqueId, songId, nowSeconds - 3600)
+                val dayCount = socialRepository.countViewsSince(player.uniqueId, songId, nowSeconds - 86_400)
+                if (hourCount >= hourLimit || dayCount >= dayLimit) return@Runnable
+
+                socialRepository.recordView(player.uniqueId, songId, nowSeconds)
+                val newTotalViews = songRepository.incrementViews(songId, 1)
+
+                if (song.isMonetizationEligible() && viewsPerPoint > 0 && newTotalViews % viewsPerPoint == 0L) {
+                    userRepository.addPending(song.authorUuid, points = 1)
+                }
+            },
+        )
+    }
+
+    private fun isAfk(player: Player): Boolean {
+        val papi = Bukkit.getPluginManager().getPlugin("PlaceholderAPI") ?: return false
+        if (!papi.isEnabled) return false
+        return try {
+            me.clip.placeholderapi.PlaceholderAPI.setPlaceholders(player, "%essentials_afk%")
+                .equals("true", ignoreCase = true)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+}

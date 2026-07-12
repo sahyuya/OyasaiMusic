@@ -1,0 +1,152 @@
+package com.github.sahyuya.oyasaiMusic.db
+
+import com.github.sahyuya.oyasaiMusic.util.UuidUtil
+import java.util.UUID
+
+/**
+ * song_likes / favorites / follows / view_history テーブルへのアクセスを担当するリポジトリ。
+ * データ・システム設計書 1-3章に準拠。UNIQUE制約により重複登録はDBレベルでブロックされるため、
+ * 呼び出し側は `INSERT ... ON CONFLICT DO NOTHING` の戻り値（更新件数）で
+ * 「既に登録済みだったかどうか」を判定できる。
+ */
+class SocialRepository(private val db: DatabaseManager) {
+
+    // ---------- いいね ----------
+
+    /** @return true = 新規にいいねを登録できた / false = 既にいいね済みだった */
+    fun addLike(userUuid: UUID, songId: Long): Boolean = db.transaction { conn ->
+        conn.prepareStatement(
+            "INSERT INTO song_likes (user_uuid, song_id, created_at) VALUES (?, ?, ?) " +
+                    "ON CONFLICT(user_uuid, song_id) DO NOTHING"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.setLong(2, songId)
+            ps.setLong(3, System.currentTimeMillis() / 1000)
+            ps.executeUpdate() > 0
+        }
+    }
+
+    fun hasLiked(userUuid: UUID, songId: Long): Boolean = db.transaction { conn ->
+        conn.prepareStatement("SELECT 1 FROM song_likes WHERE user_uuid = ? AND song_id = ?").use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.setLong(2, songId)
+            ps.executeQuery().use { it.next() }
+        }
+    }
+
+    // ---------- お気に入り ----------
+
+    fun addFavorite(userUuid: UUID, songId: Long): Boolean = db.transaction { conn ->
+        conn.prepareStatement(
+            "INSERT INTO favorites (user_uuid, song_id, created_at) VALUES (?, ?, ?) " +
+                    "ON CONFLICT(user_uuid, song_id) DO NOTHING"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.setLong(2, songId)
+            ps.setLong(3, System.currentTimeMillis() / 1000)
+            ps.executeUpdate() > 0
+        }
+    }
+
+    fun removeFavorite(userUuid: UUID, songId: Long) = db.transaction { conn ->
+        conn.prepareStatement("DELETE FROM favorites WHERE user_uuid = ? AND song_id = ?").use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.setLong(2, songId)
+            ps.executeUpdate()
+        }
+    }
+
+    fun listFavoriteSongIds(userUuid: UUID): List<Long> = db.transaction { conn ->
+        conn.prepareStatement(
+            "SELECT song_id FROM favorites WHERE user_uuid = ? ORDER BY created_at DESC"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.executeQuery().use { rs ->
+                val list = mutableListOf<Long>()
+                while (rs.next()) list += rs.getLong("song_id")
+                list
+            }
+        }
+    }
+
+    // ---------- フォロー ----------
+
+    fun follow(followerUuid: UUID, targetUuid: UUID): Boolean = db.transaction { conn ->
+        conn.prepareStatement(
+            "INSERT INTO follows (follower_uuid, target_uuid, created_at) VALUES (?, ?, ?) " +
+                    "ON CONFLICT(follower_uuid, target_uuid) DO NOTHING"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(followerUuid))
+            ps.setBytes(2, UuidUtil.toBytes(targetUuid))
+            ps.setLong(3, System.currentTimeMillis() / 1000)
+            ps.executeUpdate() > 0
+        }
+    }
+
+    fun unfollow(followerUuid: UUID, targetUuid: UUID) = db.transaction { conn ->
+        conn.prepareStatement("DELETE FROM follows WHERE follower_uuid = ? AND target_uuid = ?").use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(followerUuid))
+            ps.setBytes(2, UuidUtil.toBytes(targetUuid))
+            ps.executeUpdate()
+        }
+    }
+
+    fun listFollowingUuids(followerUuid: UUID): List<UUID> = db.transaction { conn ->
+        conn.prepareStatement(
+            "SELECT target_uuid FROM follows WHERE follower_uuid = ? ORDER BY created_at DESC"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(followerUuid))
+            ps.executeQuery().use { rs ->
+                val list = mutableListOf<UUID>()
+                while (rs.next()) list += UuidUtil.fromBytes(rs.getBytes("target_uuid"))
+                list
+            }
+        }
+    }
+
+    fun countFollowers(targetUuid: UUID): Long = db.transaction { conn ->
+        conn.prepareStatement("SELECT COUNT(*) FROM follows WHERE target_uuid = ?").use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(targetUuid))
+            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
+        }
+    }
+
+    // ---------- 視聴履歴（回数制限判定用） ----------
+
+    fun recordView(userUuid: UUID, songId: Long, timestamp: Long = System.currentTimeMillis() / 1000) =
+        db.transaction { conn ->
+            conn.prepareStatement(
+                "INSERT INTO view_history (user_uuid, song_id, timestamp) VALUES (?, ?, ?)"
+            ).use { ps ->
+                ps.setBytes(1, UuidUtil.toBytes(userUuid))
+                ps.setLong(2, songId)
+                ps.setLong(3, timestamp)
+                ps.executeUpdate()
+            }
+        }
+
+    /**
+     * データ・システム設計書 1-3章の視聴制限ロジック用に、
+     * 指定時刻より後の再生回数（直近1時間・24時間の判定に使用）を数える。
+     */
+    fun countViewsSince(userUuid: UUID, songId: Long, sinceEpochSeconds: Long): Long = db.transaction { conn ->
+        conn.prepareStatement(
+            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ? AND timestamp >= ?"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.setLong(2, songId)
+            ps.setLong(3, sinceEpochSeconds)
+            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
+        }
+    }
+
+    fun countTotalViews(userUuid: UUID, songId: Long): Long = db.transaction { conn ->
+        conn.prepareStatement(
+            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ?"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(userUuid))
+            ps.setLong(2, songId)
+            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
+        }
+    }
+}
