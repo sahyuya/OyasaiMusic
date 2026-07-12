@@ -17,9 +17,17 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * メインスレッドとは独立した [ScheduledExecutorService] で音符ごとのタイミングを
  * 高精度にスケジュールし、実際の音送信（Bukkit API呼び出し）だけを
- * メインスレッドへ折り返して実行する。これによりBukkit標準スケジューラの
- * 50ms(1tick)単位の粒度に縛られない精密なタイミング制御を実現しつつ、
- * スレッドセーフ性を確保する。
+ * メインスレッドへ折り返して実行する。
+ *
+ * 注意: `Player#playSound` はPaper上で非同期スレッドから呼び出すと
+ * `IllegalStateException: Asynchronous play sound!` で例外になることを確認しているため、
+ * メインスレッドへのホップ自体は省略できない。その代わり、以下の対策で安定性を高めている。
+ *   - 同一ミリ秒の音符（和音）は1回のスケジュール/ホップにまとめ、tick跨ぎによる和音の
+ *     ズレを防止する（[play] 内の `groupedByTime` を参照）。
+ *   - スレッドプールを4に増強し、密なノートでもスケジューリング自体がボトルネックにならないようにする。
+ * ただし、単発ノート同士の間隔についてはBukkitのtick境界(最大約50ms)に伴う揺らぎが
+ * プラットフォーム上の制約として残る。より厳密な安定性が必要な場合はNMSレベルの
+ * ネットワーク送信タイミング制御が必要になる。
  */
 class PlaybackEngine(
     private val plugin: Plugin,
@@ -29,7 +37,7 @@ class PlaybackEngine(
 
     private val threadCounter = AtomicInteger(1)
     private val executor: ScheduledExecutorService = Executors.newScheduledThreadPool(
-        2,
+        4,
         ThreadFactory { r -> Thread(r, "OyasaiMusic-Playback-${threadCounter.getAndIncrement()}").apply { isDaemon = true } },
     )
 
@@ -65,15 +73,22 @@ class PlaybackEngine(
         val bedrockSurvivingIndices = computeBedrockSurvivingIndices(scaledNotes)
         val totalDurationMs = scaledNotes.maxOfOrNull { (_, n) -> n.timeMs } ?: 0
 
-        for ((index, note) in scaledNotes) {
+        // 同一ミリ秒の音符（和音）をまとめて1回のスケジュール/メインスレッドホップで処理する。
+        // 音符ごとに個別スケジュールすると、和音を構成する各音が別々のtickへ振り分けられ
+        // 和音のタイミングがズレて聞こえることがあったため、この単位でまとめている。
+        val groupedByTime: Map<Int, List<Pair<Int, NoteEvent>>> = scaledNotes.groupBy { (_, note) -> note.timeMs }
+
+        for ((timeMs, group) in groupedByTime) {
             val future = executor.schedule(
                 Runnable {
                     if (session.isCancelled) return@Runnable
                     Bukkit.getScheduler().runTask(plugin, Runnable {
-                        dispatch(session, note, bedrock = index in bedrockSurvivingIndices)
+                        for ((index, note) in group) {
+                            dispatch(session, note, bedrock = index in bedrockSurvivingIndices)
+                        }
                     })
                 },
-                note.timeMs.toLong(),
+                timeMs.toLong(),
                 TimeUnit.MILLISECONDS,
             )
             session.scheduledTasks.add(future)

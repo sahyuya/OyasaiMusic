@@ -6,7 +6,6 @@ import com.sk89q.worldedit.extent.clipboard.Clipboard
 import com.sk89q.worldedit.math.BlockVector3
 import org.bukkit.Material
 import org.bukkit.block.data.BlockData
-import org.bukkit.block.data.Powerable
 import org.bukkit.block.data.type.NoteBlock as BukkitNoteBlock
 import org.bukkit.block.data.type.Repeater
 import java.util.ArrayDeque
@@ -20,10 +19,15 @@ import java.util.ArrayDeque
  * ## 簡易モデルであることの注意
  * 本物のレッドストーン挙動を完全再現するには膨大な実装が必要なため、
  * 本実装は以下のように単純化している（今後の精緻化が必要な場合は拡張してほしい）:
- *  - 起点は「常時電力を発する（と見なせる）ブロック」を自動探索する:
- *    レッドストーンブロック / 点灯中と仮定したレッドストーントーチ / ONのレバー
- *  - レッドストーンダストの伝播は 遅延0ms、同一Y・1段上り・1段下りの4方位のみを考慮する
- *    （実際のブロック形状に基づく接続可否までは判定しない）
+ *  - 起点は「回路のスタート地点になり得るブロック」を自動探索する:
+ *    レッドストーンブロック / レッドストーントーチ(立て・壁掛け) / レバー(ON/OFF問わず) / 各種ボタン。
+ *    これはクリップボードを静的に解析しているだけで実際に通電させているわけではないため、
+ *    レバーのON/OFF状態やボタンの押下状態は問わず「起点の目印」として扱っている。
+ *  - 起点は直接隣接していないダスト（例:「レバーが取り付いた壁の上に乗ったダスト」等、
+ *    レバー自体には隣接しないがレバーが電力を与えるブロックの上に乗っているダスト）も
+ *    拾えるよう、起点周辺 3×3(水平)×2段(同じY・1つ上のY) の範囲まで広げて探索する
+ *    （[SOURCE_REACH_OFFSETS]）。これより先（ダストからダストへの伝播等）は
+ *    直接隣接のみを辿る単純なモデルのままにしている。
  *  - リピーターは向いている方向にのみ伝播し、delay(1〜4) × 100ms を加算する
  *  - コンパレーターは今回は非対応（信号は通過しない）
  *  - 各座標はBFSで1度のみ処理する（強電力/弱電力の区別、同一ブロックへの複数経路到達による
@@ -46,6 +50,22 @@ object CircuitRecorder {
         Triple(1, 0, 0), Triple(-1, 0, 0), Triple(0, 1, 0), Triple(0, -1, 0), Triple(0, 0, 1), Triple(0, 0, -1),
     )
 
+    // リピーター探索に使う水平4方位
+    private val CARDINAL_4 = listOf(Triple(1, 0, 0), Triple(-1, 0, 0), Triple(0, 0, 1), Triple(0, 0, -1))
+
+    // 起点(電力源)から「取り付け先ブロックの上に乗ったダスト」等を拾うための広域オフセット
+    // (水平3x3 × 同じY/1つ上のY、自分自身を除く17マス)
+    private val SOURCE_REACH_OFFSETS: List<Triple<Int, Int, Int>> = buildList {
+        for (dy in 0..1) {
+            for (dx in -1..1) {
+                for (dz in -1..1) {
+                    if (dx == 0 && dz == 0 && dy == 0) continue
+                    add(Triple(dx, dy, dz))
+                }
+            }
+        }
+    }
+
     fun record(clipboard: Clipboard): List<NoteEvent> {
         val region = clipboard.region
         val min = region.minimumPoint
@@ -54,6 +74,8 @@ object CircuitRecorder {
         val visited = HashSet<BlockVector3>()
         val queue = ArrayDeque<Node>()
         val notes = mutableListOf<NoteEvent>()
+        // (ノートブロック位置, 発音ミリ秒) の組で発音を重複記録しないようにする
+        val firedNoteKeys = HashSet<Pair<BlockVector3, Int>>()
 
         // --- 1. 起点(電力源)をすべて探索してBFSキューへ投入 ---
         for (x in min.x()..max.x()) {
@@ -61,9 +83,24 @@ object CircuitRecorder {
                 for (z in min.z()..max.z()) {
                     val pos = BlockVector3.at(x, y, z)
                     val data = blockDataAt(clipboard, pos) ?: continue
-                    if (isPowerSource(data)) {
-                        if (visited.add(pos)) {
-                            queue.add(Node(pos, 0))
+                    if (!isPowerSource(data)) continue
+
+                    if (visited.add(pos)) {
+                        queue.add(Node(pos, 0))
+                    }
+
+                    // 起点に直接隣接しないダスト・ノートブロックも拾う（広域探索）
+                    for ((dx, dy, dz) in SOURCE_REACH_OFFSETS) {
+                        val reachPos = pos.add(dx, dy, dz)
+                        if (!region.contains(reachPos)) continue
+                        val reachData = blockDataAt(clipboard, reachPos) ?: continue
+
+                        if (reachData.material == Material.REDSTONE_WIRE) {
+                            if (visited.add(reachPos)) {
+                                queue.add(Node(reachPos, 0))
+                            }
+                        } else if (reachData is BukkitNoteBlock) {
+                            fireNote(reachData, reachPos, 0, notes, firedNoteKeys)
                         }
                     }
                 }
@@ -84,13 +121,7 @@ object CircuitRecorder {
                 if (!region.contains(neighborPos)) continue
                 val neighborData = blockDataAt(clipboard, neighborPos) ?: continue
                 if (neighborData is BukkitNoteBlock) {
-                    notes += NoteEvent(
-                        timeMs = timeMs,
-                        instrument = InstrumentMapper.toId(neighborData.instrument),
-                        pitch = neighborData.note.id,
-                        volume = 100,
-                        pan = 0,
-                    )
+                    fireNote(neighborData, neighborPos, timeMs, notes, firedNoteKeys)
                 }
             }
 
@@ -106,7 +137,7 @@ object CircuitRecorder {
             }
 
             // 2-3. リピーターへの伝播（delay×100msを加算し、facing方向の先へ出力）
-            for ((dx, dy, dz) in listOf(Triple(1, 0, 0), Triple(-1, 0, 0), Triple(0, 0, 1), Triple(0, 0, -1))) {
+            for ((dx, dy, dz) in CARDINAL_4) {
                 val repeaterPos = pos.add(dx, dy, dz)
                 if (!region.contains(repeaterPos)) continue
                 val repeaterData = blockDataAt(clipboard, repeaterPos) ?: continue
@@ -131,18 +162,37 @@ object CircuitRecorder {
         return notes
     }
 
+    private fun fireNote(
+        noteBlockData: BukkitNoteBlock,
+        pos: BlockVector3,
+        timeMs: Int,
+        notes: MutableList<NoteEvent>,
+        firedNoteKeys: MutableSet<Pair<BlockVector3, Int>>,
+    ) {
+        val key = pos to timeMs
+        if (!firedNoteKeys.add(key)) return
+        notes += NoteEvent(
+            timeMs = timeMs,
+            instrument = InstrumentMapper.toId(noteBlockData.instrument),
+            pitch = noteBlockData.note.id,
+            volume = 100,
+            pan = 0,
+        )
+    }
+
     private fun blockDataAt(clipboard: Clipboard, pos: BlockVector3): BlockData? = try {
         BukkitAdapter.adapt(clipboard.getFullBlock(pos))
     } catch (_: Exception) {
         null
     }
 
-    private fun isPowerSource(data: BlockData): Boolean = when {
-        data.material == Material.REDSTONE_BLOCK -> true
-        data.material == Material.REDSTONE_TORCH -> true
-        data.material == Material.REDSTONE_WALL_TORCH -> true
-        data.material == Material.LEVER && data is Powerable && data.isPowered -> true
-        else -> false
+    /**
+     * 起点(電力源)候補かどうかを判定する。クリップボードを静的に解析するだけなので、
+     * レバーのON/OFF状態やボタンの押下状態は問わない（起点の目印として扱うのみ）。
+     */
+    private fun isPowerSource(data: BlockData): Boolean = when (data.material) {
+        Material.REDSTONE_BLOCK, Material.REDSTONE_TORCH, Material.REDSTONE_WALL_TORCH, Material.LEVER -> true
+        else -> data.material.name.endsWith("_BUTTON")
     }
 
     private fun directionBetween(from: BlockVector3, to: BlockVector3): org.bukkit.block.BlockFace {

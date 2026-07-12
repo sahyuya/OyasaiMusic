@@ -44,7 +44,7 @@ object GridRecorder {
                     val bukkitData = BukkitAdapter.adapt(baseBlock)
                     val noteBlockData = bukkitData as? BukkitNoteBlock ?: continue
 
-                    val timeIndex = axis.indexOf(pos, min)
+                    val timeIndex = axis.indexOf(pos, min, max)
                     val timeMs = (timeIndex * stepMs).toInt()
 
                     var volume = 100
@@ -66,19 +66,42 @@ object GridRecorder {
         return notes
     }
 
-    private fun resolveAxis(facing: BlockFace): TimeAxis = when (facing) {
-        BlockFace.NORTH, BlockFace.SOUTH -> TimeAxis.Z
-        BlockFace.EAST, BlockFace.WEST -> TimeAxis.X
-        // 水平4方位以外(UP/DOWN等)が渡された場合はZ軸へフォールバックする
-        else -> TimeAxis.Z
+    /**
+     * プレイヤーのYawのみから、水平4方位(NORTH/SOUTH/EAST/WEST)のうち最も近いものを判定する。
+     * `Entity#getFacing()` はPitch次第でUP/DOWNを返すことがあるため、
+     * 録音の時間軸判定には代わりにこちらを使用する（水平4方位に必ず丸め込む）。
+     */
+    fun horizontalFacingFromYaw(yaw: Float): BlockFace {
+        val normalized = ((yaw % 360) + 360) % 360
+        return when {
+            normalized < 45 || normalized >= 315 -> BlockFace.SOUTH
+            normalized < 135 -> BlockFace.WEST
+            normalized < 225 -> BlockFace.NORTH
+            else -> BlockFace.EAST
+        }
     }
 
-    private enum class TimeAxis {
-        X, Z;
+    private fun resolveAxis(facing: BlockFace): TimeAxis = when (facing) {
+        BlockFace.SOUTH -> TimeAxis.Z_POSITIVE
+        BlockFace.NORTH -> TimeAxis.Z_NEGATIVE
+        BlockFace.EAST -> TimeAxis.X_POSITIVE
+        BlockFace.WEST -> TimeAxis.X_NEGATIVE
+        // 水平4方位以外(UP/DOWN等)が渡された場合はフォールバックする
+        else -> TimeAxis.Z_POSITIVE
+    }
 
-        fun indexOf(pos: BlockVector3, min: BlockVector3): Int = when (this) {
-            X -> pos.x() - min.x()
-            Z -> pos.z() - min.z()
+    /**
+     * 時間軸として使う座標軸と、その向き（プレイヤーが向いている方向ほど時刻が進むように、
+     * 座標が増える方向を使うか減る方向を使うかを表す）。
+     */
+    private enum class TimeAxis {
+        X_POSITIVE, X_NEGATIVE, Z_POSITIVE, Z_NEGATIVE;
+
+        fun indexOf(pos: BlockVector3, min: BlockVector3, max: BlockVector3): Int = when (this) {
+            X_POSITIVE -> pos.x() - min.x()
+            X_NEGATIVE -> max.x() - pos.x()
+            Z_POSITIVE -> pos.z() - min.z()
+            Z_NEGATIVE -> max.z() - pos.z()
         }
     }
 }

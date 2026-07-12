@@ -84,7 +84,7 @@ class RecordCommand(
             return
         }
         val clipboard = getClipboardOrNotify(player) ?: return
-        val facing = player.facing
+        val facing = GridRecorder.horizontalFacingFromYaw(player.location.yaw)
 
         // FAWEクリップボードの走査は重くなり得るため非同期化する（設計書3章: 「すべて非同期で処理」）。
         Bukkit.getScheduler().runTaskAsynchronously(
@@ -163,8 +163,20 @@ class RecordCommand(
             return
         }
         val bpm = session.impliedBpm()
-        val notes: List<NoteEvent> = session.notes.toList()
+        val notes: List<NoteEvent> = trimLeadingSilence(session.notes.toList())
         finalizeRecording(player, notes, bpm)
+    }
+
+    /**
+     * 動的録音は `/record start` を実行してから最初の音を鳴らすまでに間が空くことが多いため、
+     * 最初に記録された音符のタイミングを0msとして全体をシフトし、先頭の無音を取り除く。
+     * 終了(stop)時点で記録済みの最後の音符がそのまま末尾になる（追加の無音は付与しない）。
+     */
+    private fun trimLeadingSilence(notes: List<NoteEvent>): List<NoteEvent> {
+        if (notes.isEmpty()) return notes
+        val minTime = notes.minOf { it.timeMs }
+        if (minTime == 0) return notes
+        return notes.map { it.copy(timeMs = it.timeMs - minTime) }
     }
 
     // ---------------- 共通: 保存処理 ----------------
