@@ -1,6 +1,7 @@
 package com.github.sahyuya.oyasaiMusic.command
 
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
+import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
 import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.db.SongRepository
 import com.github.sahyuya.oyasaiMusic.model.Song
@@ -43,16 +44,30 @@ class PlaytestCommand(
 
         when (args[0].lowercase()) {
             "stop" -> handleStop(sender)
-            else -> handlePlay(sender, args[0])
+            else -> handlePlay(sender, args)
         }
         return true
     }
 
-    private fun handlePlay(player: Player, songIdStr: String) {
+    private fun handlePlay(player: Player, args: Array<out String>) {
+        val songIdStr = args[0]
         val songId = songIdStr.toLongOrNull()
         if (songId == null) {
             player.sendMessage("§c楽曲IDは正の整数で指定してください。")
             return
+        }
+
+        val mode = if (args.size >= 2) {
+            when (args[1].lowercase()) {
+                "entityemitter", "entity_emitter", "entity-emitter", "emitter" -> PlaybackMode.ENTITY_EMITTER
+                "positional", "position" -> PlaybackMode.POSITIONAL
+                else -> {
+                    player.sendMessage("§c再生方式は entityemitter または positional を指定してください。")
+                    return
+                }
+            }
+        } else {
+            PlaybackMode.ENTITY_EMITTER
         }
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
@@ -81,6 +96,7 @@ class PlaytestCommand(
                         recipients = listOf(player),
                         playbackBpm = song.bpm,
                         isAmbientPlayback = false,
+                        mode = mode,
                     )
                     player.sendMessage("§a再生開始: §f${song.title}§a（§f${audioData.notes.size}§a音符、${audioData.totalDurationMs}ms）")
                 })
@@ -101,8 +117,8 @@ class PlaytestCommand(
         sender.sendMessage(
             listOf(
                 "§e--- OyasaiMusic /playtest (デバッグ) ---",
-                "§7/playtest <楽曲ID>      §f指定楽曲を再生",
-                "§7/playtest stop          §f再生中の楽曲を停止（未実装）",
+                "§7/playtest <楽曲ID> <entityemitter/positional>  §f指定楽曲を再生（再生方式オプション）",
+                "§7/playtest stop                                   §f再生中の楽曲を停止（未実装）",
             ).joinToString("\n")
         )
     }
@@ -114,6 +130,7 @@ class PlaytestCommand(
         args: Array<out String>,
     ): List<String> = when (args.size) {
         1 -> listOf("stop").filter { it.startsWith(args[0].lowercase()) }
+        2 -> listOf("entityemitter", "positional").filter { it.startsWith(args[1].lowercase()) }
         else -> emptyList()
     }
 }
