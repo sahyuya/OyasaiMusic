@@ -110,10 +110,15 @@ class OyasaiMusic : JavaPlugin() {
         } ?: logger.warning("recordコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
         // --- 再生エンジン ---
+        val defaultMode = when (config.getString("playback.default-mode", "entity_emitter")?.lowercase()) {
+            "positional" -> com.github.sahyuya.oyasaiMusic.audio.PlaybackMode.POSITIONAL
+            else -> com.github.sahyuya.oyasaiMusic.audio.PlaybackMode.ENTITY_EMITTER
+        }
         playbackEngine = PlaybackEngine(
             plugin = this,
             bedrockPrefix = config.getString("bedrock.name-prefix", ".") ?: ".",
             chordLimit = config.getInt("bedrock.chord-limit", 3),
+            defaultMode = defaultMode,
         )
 
         getCommand("playtest")?.let { cmd ->

@@ -86,43 +86,32 @@ class RecordCommand(
         val clipboard = getClipboardOrNotify(player) ?: return
         val facing = GridRecorder.horizontalFacingFromYaw(player.location.yaw)
 
-        // FAWEクリップボードの走査は重くなり得るため非同期化する（設計書3章: 「すべて非同期で処理」）。
-        Bukkit.getScheduler().runTaskAsynchronously(
-            plugin,
-            Runnable {
-                val notes = try {
-                    GridRecorder.record(clipboard, bpm, facing)
-                } catch (e: Exception) {
-                    plugin.logger.warning("グリッド型録音の解析に失敗しました: ${e.message}")
-                    Bukkit.getScheduler().runTask(plugin, Runnable {
-                        player.sendMessage("§c録音の解析中にエラーが発生しました。")
-                    })
-                    return@Runnable
-                }
-                finalizeRecording(player, notes, bpm)
-            },
-        )
+        // クリップボード走査中に看板(ワールドの実ブロック)も読み取るため、ここはメインスレッドで
+        // 同期実行する（Bukkitのワールド読み取りは非同期スレッドからだと安全性が保証されないため）。
+        // ファイル書き込み・DB登録は finalizeRecording 内で別途非同期化される。
+        val notes = try {
+            GridRecorder.record(clipboard, bpm, facing, player.world)
+        } catch (e: Exception) {
+            plugin.logger.warning("グリッド型録音の解析に失敗しました: ${e.message}")
+            player.sendMessage("§c録音の解析中にエラーが発生しました。")
+            return
+        }
+        finalizeRecording(player, notes, bpm)
     }
 
     private fun handleCircuit(player: Player) {
         val clipboard = getClipboardOrNotify(player) ?: return
 
-        Bukkit.getScheduler().runTaskAsynchronously(
-            plugin,
-            Runnable {
-                val notes = try {
-                    CircuitRecorder.record(clipboard)
-                } catch (e: Exception) {
-                    plugin.logger.warning("回路型録音の解析に失敗しました: ${e.message}")
-                    Bukkit.getScheduler().runTask(plugin, Runnable {
-                        player.sendMessage("§c録音の解析中にエラーが発生しました。")
-                    })
-                    return@Runnable
-                }
-                // 回路型はBPM概念が無いため、便宜上120を基準BPMとして保存する（再生速度設定はGUIフェーズで変更可能にする想定）。
-                finalizeRecording(player, notes, bpm = 120)
-            },
-        )
+        // 同上の理由でメインスレッドで同期実行する。
+        val notes = try {
+            CircuitRecorder.record(clipboard, player.world)
+        } catch (e: Exception) {
+            plugin.logger.warning("回路型録音の解析に失敗しました: ${e.message}")
+            player.sendMessage("§c録音の解析中にエラーが発生しました。")
+            return
+        }
+        // 回路型はBPM概念が無いため、便宜上120を基準BPMとして保存する（再生速度設定はGUIフェーズで変更可能にする想定）。
+        finalizeRecording(player, notes, bpm = 120)
     }
 
     private fun getClipboardOrNotify(player: Player): Clipboard? {
@@ -183,9 +172,7 @@ class RecordCommand(
 
     private fun finalizeRecording(player: Player, notes: List<NoteEvent>, bpm: Int) {
         if (notes.isEmpty()) {
-            Bukkit.getScheduler().runTask(plugin, Runnable {
-                player.sendMessage("§c録音対象のノートブロックが見つかりませんでした。")
-            })
+            player.sendMessage("§c録音対象のノートブロックが見つかりませんでした。")
             return
         }
 

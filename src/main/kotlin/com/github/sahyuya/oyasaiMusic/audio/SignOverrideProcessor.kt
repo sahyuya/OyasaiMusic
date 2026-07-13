@@ -41,17 +41,35 @@ object SignOverrideProcessor {
         }
     }
 
+    /**
+     * グリッド型・回路型録音用のメイン経路。
+     *
+     * FAWEクリップボードは`//copy`した時点のワールド座標をそのまま保持しているため、
+     * クリップボード内のNBTを直接解析するのではなく、同じ座標にある「実ワールド上に
+     * まだ残っている元のブロック」から看板を読み取る（[extractFromWorld]と同じ信頼できる
+     * Bukkit APIを再利用できるため）。前提として、録音コマンドを実行する時点で
+     * コピー元の建築（看板を含む）がワールド上にそのまま残っている必要がある。
+     */
+    fun extractFromWorldPos(world: org.bukkit.World, noteBlockPos: BlockVector3): Pair<Int?, Int?> {
+        return try {
+            val block = world.getBlockAt(noteBlockPos.x(), noteBlockPos.y(), noteBlockPos.z())
+            extractFromWorld(block)
+        } catch (_: Exception) {
+            null to null
+        }
+    }
+
     private val TEXT_FIELD_PATTERN = Regex("\"text\"\\s*:\\s*\"(.*?)\"")
 
     /**
-     * FAWEクリップボード上のノートブロックを対象に、真上の看板を読み取る（グリッド型・回路型録音用）。
+     * [extractFromWorldPos] が使えない場合（コピー元のワールドが既に変更されている等）向けの
+     * フォールバック。FAWEクリップボードのNBTを直接解析する。
      *
      * 注意: WorldEdit 7.3+ のNBTライブラリ(LinBus)の内部API（コンパウンドタグのキー取得方法等）は
      * コンパイル環境（本サンドボックスにFAWE本体を導入できないため）で確認できていない。
      * そのため厳密なタグ探索は行わず、看板を含むブロックのNBTを [Any.toString] した文字列全体から
      * テキストコンポーネント（`{"text":"100"}` 等）を正規表現で拾う、フォーマットに依存しにくい
-     * 簡易実装としている。看板には装飾を付けず、数値のみを書く運用を推奨する。
-     * 取得に失敗した場合は上書き無し(null, null)を返し、録音自体は継続させる。
+     * 簡易実装としている。取得に失敗した場合は上書き無し(null, null)を返し、録音自体は継続させる。
      */
     fun extractFromClipboard(clipboard: Clipboard, noteBlockPos: BlockVector3): Pair<Int?, Int?> {
         return try {

@@ -24,8 +24,9 @@ object GridRecorder {
      * @param clipboard 走査対象のFAWEクリップボード（プレイヤーが事前に //copy 等で確保したもの）
      * @param bpm 基準BPM
      * @param timeAxisFacing 時間軸として使用する水平向き（コマンド実行時のプレイヤーの向きを渡す）
+     * @param world 看板の読み取りに使用するワールド（//copy した際の元の建築がまだ残っている前提）
      */
-    fun record(clipboard: Clipboard, bpm: Int, timeAxisFacing: BlockFace): List<NoteEvent> {
+    fun record(clipboard: Clipboard, bpm: Int, timeAxisFacing: BlockFace, world: org.bukkit.World): List<NoteEvent> {
         require(bpm > 0) { "BPMは1以上である必要があります: $bpm" }
         val stepMs = 60000.0 / bpm
 
@@ -49,7 +50,7 @@ object GridRecorder {
 
                     var volume = 100
                     var pan = 0
-                    val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromClipboard(clipboard, pos)
+                    val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromWorldPos(world, pos)
                     overrideVolume?.let { volume = it }
                     overridePan?.let { pan = it }
 

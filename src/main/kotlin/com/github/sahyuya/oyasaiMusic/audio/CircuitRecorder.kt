@@ -5,6 +5,7 @@ import com.sk89q.worldedit.bukkit.BukkitAdapter
 import com.sk89q.worldedit.extent.clipboard.Clipboard
 import com.sk89q.worldedit.math.BlockVector3
 import org.bukkit.Material
+import org.bukkit.World
 import org.bukkit.block.data.BlockData
 import org.bukkit.block.data.type.NoteBlock as BukkitNoteBlock
 import org.bukkit.block.data.type.Repeater
@@ -23,24 +24,30 @@ import java.util.ArrayDeque
  *    レッドストーンブロック / レッドストーントーチ(立て・壁掛け) / レバー(ON/OFF問わず) / 各種ボタン。
  *    これはクリップボードを静的に解析しているだけで実際に通電させているわけではないため、
  *    レバーのON/OFF状態やボタンの押下状態は問わず「起点の目印」として扱っている。
- *  - 起点は直接隣接していないダスト（例:「レバーが取り付いた壁の上に乗ったダスト」等、
- *    レバー自体には隣接しないがレバーが電力を与えるブロックの上に乗っているダスト）も
+ *  - 起点は直接隣接していないダスト（例:「レバーが取り付いた壁の上に乗ったダスト」等）も
  *    拾えるよう、起点周辺 3×3(水平)×2段(同じY・1つ上のY) の範囲まで広げて探索する
- *    （[SOURCE_REACH_OFFSETS]）。これより先（ダストからダストへの伝播等）は
- *    直接隣接のみを辿る単純なモデルのままにしている。
+ *    （[SOURCE_REACH_OFFSETS]）。
+ *  - **ノートブロックは通常の固体ブロックと同様に電力を伝える**: 「リピーター→ノートブロック→
+ *    その真上に乗ったダスト→次のリピーター→…」という連鎖に対応するため、ノートブロックが
+ *    発音した時点でそのノートブロック自身もBFSの伝播元として扱う。
  *  - リピーターは向いている方向にのみ伝播し、delay(1〜4) × 100ms を加算する
  *  - コンパレーターは今回は非対応（信号は通過しない）
  *  - 各座標はBFSで1度のみ処理する（強電力/弱電力の区別、同一ブロックへの複数経路到達による
  *    再トリガーは考慮しない）
  *  - ノートブロックは信号が届いた時点のクリップボード内の音階・楽器をそのまま採用する
+ *  - 音量・Panは、ノートブロック真上の看板があれば[SignOverrideProcessor]で上書きする
+ *    （ワールド上にまだ残っている元の看板を読み取る。詳細は[SignOverrideProcessor.extractFromWorldPos]）
  */
 object CircuitRecorder {
 
     private data class Node(val pos: BlockVector3, val timeMs: Int)
 
-    // 水平4方位 + 1段上り + 1段下りの、ダストが伝播しうる相対オフセット
+    // 水平4方位 + 真上/真下 + 1段上り + 1段下りの、ダスト(または通電した固体ブロックの上のダスト)が
+    // 伝播しうる相対オフセット。真上(0,1,0)は「ノートブロックや電源ブロックの真上に乗ったダスト」を
+    // 拾うために必須。
     private val DUST_NEIGHBOR_OFFSETS = listOf(
         Triple(1, 0, 0), Triple(-1, 0, 0), Triple(0, 0, 1), Triple(0, 0, -1),
+        Triple(0, 1, 0), Triple(0, -1, 0),
         Triple(1, 1, 0), Triple(-1, 1, 0), Triple(0, 1, 1), Triple(0, 1, -1),
         Triple(1, -1, 0), Triple(-1, -1, 0), Triple(0, -1, 1), Triple(0, -1, -1),
     )
@@ -66,7 +73,11 @@ object CircuitRecorder {
         }
     }
 
-    fun record(clipboard: Clipboard): List<NoteEvent> {
+    /**
+     * @param clipboard 走査対象のFAWEクリップボード
+     * @param world 看板の読み取りに使用するワールド（//copy した際の元の建築がまだ残っている前提）
+     */
+    fun record(clipboard: Clipboard, world: World): List<NoteEvent> {
         val region = clipboard.region
         val min = region.minimumPoint
         val max = region.maximumPoint
@@ -100,7 +111,7 @@ object CircuitRecorder {
                                 queue.add(Node(reachPos, 0))
                             }
                         } else if (reachData is BukkitNoteBlock) {
-                            fireNote(reachData, reachPos, 0, notes, firedNoteKeys)
+                            fireNoteAndContinue(reachData, reachPos, 0, world, notes, firedNoteKeys, visited, queue)
                         }
                     }
                 }
@@ -115,13 +126,14 @@ object CircuitRecorder {
         while (queue.isNotEmpty()) {
             val (pos, timeMs) = queue.poll()
 
-            // 2-1. 隣接するノートブロックへ通電 → 発音として記録
+            // 2-1. 隣接するノートブロックへ通電 → 発音として記録し、そのノートブロック自身も
+            //      (真上に乗ったダスト等への)伝播元として扱う
             for ((dx, dy, dz) in ADJACENT_6) {
                 val neighborPos = pos.add(dx, dy, dz)
                 if (!region.contains(neighborPos)) continue
                 val neighborData = blockDataAt(clipboard, neighborPos) ?: continue
                 if (neighborData is BukkitNoteBlock) {
-                    fireNote(neighborData, neighborPos, timeMs, notes, firedNoteKeys)
+                    fireNoteAndContinue(neighborData, neighborPos, timeMs, world, notes, firedNoteKeys, visited, queue)
                 }
             }
 
@@ -162,22 +174,40 @@ object CircuitRecorder {
         return notes
     }
 
-    private fun fireNote(
+    /**
+     * ノートブロックの発音を記録し、看板による音量/Pan上書きを適用したうえで、
+     * そのノートブロック自身をBFSの伝播元としてキューへ追加する
+     * （「リピーター→ノートブロック→その上のダスト→次のリピーター」という連鎖に対応するため）。
+     */
+    private fun fireNoteAndContinue(
         noteBlockData: BukkitNoteBlock,
         pos: BlockVector3,
         timeMs: Int,
+        world: World,
         notes: MutableList<NoteEvent>,
         firedNoteKeys: MutableSet<Pair<BlockVector3, Int>>,
+        visited: MutableSet<BlockVector3>,
+        queue: ArrayDeque<Node>,
     ) {
         val key = pos to timeMs
-        if (!firedNoteKeys.add(key)) return
-        notes += NoteEvent(
-            timeMs = timeMs,
-            instrument = InstrumentMapper.toId(noteBlockData.instrument),
-            pitch = noteBlockData.note.id,
-            volume = 100,
-            pan = 0,
-        )
+        if (firedNoteKeys.add(key)) {
+            var volume = 100
+            var pan = 0
+            val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromWorldPos(world, pos)
+            overrideVolume?.let { volume = it }
+            overridePan?.let { pan = it }
+
+            notes += NoteEvent(
+                timeMs = timeMs,
+                instrument = InstrumentMapper.toId(noteBlockData.instrument),
+                pitch = noteBlockData.note.id,
+                volume = volume,
+                pan = pan,
+            )
+        }
+        if (visited.add(pos)) {
+            queue.add(Node(pos, timeMs))
+        }
     }
 
     private fun blockDataAt(clipboard: Clipboard, pos: BlockVector3): BlockData? = try {

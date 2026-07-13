@@ -17,6 +17,8 @@ recording:
   dynamic-record-full-volume-radius: 2.0
 
 playback:
+  # デフォルトの再生方式: entity_emitter(推奨, プレイヤーに音源追従・Panなし) / positional(高音質版, Pan対応)
+  default-mode: entity_emitter
   # 視聴カウント判定: 直近1時間の再生回数上限
   view-limit-per-hour: 3
   # 視聴カウント判定: 直近24時間の再生回数上限
