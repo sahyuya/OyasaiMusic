@@ -1,6 +1,5 @@
 package com.github.sahyuya.oyasaiMusic
 
-import com.github.sahyuya.oyasaiMusic.audio.HeadAnchorManager
 import com.github.sahyuya.oyasaiMusic.audio.NotePlayListener
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
@@ -47,8 +46,6 @@ class OyasaiMusic : JavaPlugin() {
     lateinit var viewCountService: ViewCountService
         private set
     lateinit var recordingSessionManager: RecordingSessionManager
-        private set
-    lateinit var headAnchorManager: HeadAnchorManager
         private set
     lateinit var playbackEngine: PlaybackEngine
         private set
@@ -121,10 +118,6 @@ class OyasaiMusic : JavaPlugin() {
             cmd.tabCompleter = executor
         } ?: logger.warning("recordコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
-        // --- 再生エンジン ---
-        headAnchorManager = HeadAnchorManager(this)
-        headAnchorManager.start()
-
         val defaultMode = when (config.getString("playback.default-mode", "default")?.lowercase()) {
             "positional" -> PlaybackMode.POSITIONAL
             else -> PlaybackMode.DEFAULT
@@ -133,7 +126,6 @@ class OyasaiMusic : JavaPlugin() {
             plugin = this,
             bedrockPrefix = config.getString("bedrock.name-prefix", ".") ?: ".",
             chordLimit = config.getInt("bedrock.chord-limit", 3),
-            headAnchorManager = headAnchorManager,
             defaultMode = defaultMode,
         )
 

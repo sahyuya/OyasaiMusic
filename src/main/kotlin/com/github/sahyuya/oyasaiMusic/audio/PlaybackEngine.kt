@@ -41,7 +41,6 @@ class PlaybackEngine(
     private val plugin: Plugin,
     private val bedrockPrefix: String,
     private val chordLimit: Int,
-    private val headAnchorManager: HeadAnchorManager,
     private val defaultMode: PlaybackMode = PlaybackMode.DEFAULT,
 ) {
 
@@ -78,12 +77,6 @@ class PlaybackEngine(
         val session = PlaybackSession(song = song, initialRecipients = recipients, isAmbientPlayback = isAmbientPlayback)
         if (notes.isEmpty() || recipients.isEmpty()) {
             return session
-        }
-
-        // DEFAULT方式の追従マーカーは「再生中のみ」存在させるため、開始時に確保する。
-        // (POSITIONALのみを使うリスナーにとっては未使用のまま残るだけで実害は無い)
-        for (player in recipients) {
-            headAnchorManager.acquire(player)
         }
 
         val scale = if (playbackBpm > 0) song.bpm.toDouble() / playbackBpm else 1.0
@@ -140,13 +133,10 @@ class PlaybackEngine(
         }
 
         // 再生終了時に必ず追従マーカーを解放する（onCompletionの有無に関わらず実行する）。
-        run {
+        if (onCompletion != null) {
             val future = executor.schedule(
                 Runnable {
-                    Bukkit.getScheduler().runTask(plugin, Runnable {
-                        releaseAnchors(session)
-                        onCompletion?.invoke(session)
-                    })
+                    Bukkit.getScheduler().runTask(plugin, Runnable { onCompletion(session) })
                 },
                 totalDurationMs.toLong() + 50L,
                 TimeUnit.MILLISECONDS,
@@ -157,17 +147,7 @@ class PlaybackEngine(
         return session
     }
 
-    fun stop(session: PlaybackSession) {
-        session.cancel()
-        releaseAnchors(session)
-    }
-
-    private fun releaseAnchors(session: PlaybackSession) {
-        if (!session.tryMarkAnchorsReleased()) return
-        for (uuid in session.initialRecipientUuids) {
-            headAnchorManager.release(uuid)
-        }
-    }
+    fun stop(session: PlaybackSession) = session.cancel()
 
     fun shutdown() {
         executor.shutdownNow()
@@ -186,7 +166,7 @@ class PlaybackEngine(
             val isBedrockPlayer = BedrockUtil.isBedrock(player, bedrockPrefix)
             if (isBedrockPlayer && !bedrock) continue // 和音間引きでこのプレイヤー種別からは間引かれた音
             val mode = modeResolver?.invoke(player) ?: fallbackMode
-            SoundDispatcher.play(player, note, mode, isBedrock = isBedrockPlayer, headAnchorManager = headAnchorManager)
+            SoundDispatcher.play(player, note, mode, isBedrock = isBedrockPlayer)
         }
     }
 

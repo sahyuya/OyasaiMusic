@@ -12,10 +12,10 @@ import kotlin.math.sin
  * 1音符を実際にプレイヤーへ送信する処理（データ・システム設計書 4章）。
  *
  * [PlaybackMode.DEFAULT] (デフォルト再生):
- *   Adventure APIの `Audience#playSound(Sound, Sound.Emitter)` に、[HeadAnchorManager] が
- *   プレイヤーの目線位置へ追従させている専用マーカーエンティティを渡すことで、音源をプレイヤーへ
- *   完全追従させる（内部的には `ClientboundSoundEntityPacket` が使われる）。Panという概念自体が
- *   存在しないため定位計算は行わない。
+ *   Adventure APIの `Audience#playSound(Sound, Sound.Emitter)` に `Sound.Emitter.self()` を渡すことで、
+ *  *   音源をプレイヤー自身のエンティティに紐づけて送信する（内部的には `ClientboundSoundEntityPacket`
+ *  *   が使われる）。音源がプレイヤーに追従し続けるため、歩きながら聴いても音響が乱れない。
+ *  *   Panという概念自体が存在しないため、定位計算は行わない。
  *
  * [PlaybackMode.POSITIONAL] (立体音響再生):
  *   従来通り `Player#playSound(Location, Sound, SoundCategory, float, float)` を、プレイヤーの
@@ -32,22 +32,20 @@ object SoundDispatcher {
         note: NoteEvent,
         mode: PlaybackMode,
         isBedrock: Boolean,
-        headAnchorManager: HeadAnchorManager,
     ) {
         when (mode) {
-            PlaybackMode.DEFAULT -> playDefault(recipient, note, headAnchorManager)
+            PlaybackMode.DEFAULT -> playDefault(recipient, note)
             // 統合版(Bedrock)は設計書の制約によりPanを常に無効化(=正面固定)する
             PlaybackMode.POSITIONAL -> playPositional(recipient, note, pan = if (isBedrock) 0 else note.pan)
         }
     }
 
-    private fun playDefault(recipient: Player, note: NoteEvent, headAnchorManager: HeadAnchorManager) {
+    private fun playDefault(recipient: Player, note: NoteEvent) {
         val bukkitSound = InstrumentMapper.soundFor(InstrumentMapper.toInstrument(note.instrument))
         val pitch = InstrumentMapper.pitchToPlaybackPitch(note.pitch)
         val volume = volumeParam(note.volume)
-        val adventureSound = AdventureSound.sound(bukkitSound.key(), AdventureSound.Source.RECORD, volume, pitch)
-        val emitter = headAnchorManager.getOrCreateAnchor(recipient)
-        recipient.playSound(adventureSound, emitter)
+        val adventureSound = AdventureSound.sound(bukkitSound, AdventureSound.Source.RECORD, volume, pitch)
+        recipient.playSound(adventureSound, AdventureSound.Emitter.self())
     }
 
     private fun playPositional(recipient: Player, note: NoteEvent, pan: Int) {
