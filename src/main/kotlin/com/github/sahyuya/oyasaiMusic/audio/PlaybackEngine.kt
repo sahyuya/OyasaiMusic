@@ -20,11 +20,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * メインスレッドへ折り返して実行する。
  *
  * デフォルトの再生方式は [PlaybackMode.DEFAULT]（Adventure APIの`Sound.Emitter`、
- * [HeadAnchorManager]でプレイヤーへ騎乗させたマーカーを使用。内部的には
- * `ClientboundSoundEntityPacket`）で、音源をプレイヤー自身に追従させることで
- * 移動による音響の乱れを防いでいる。ステレオ定位(Pan)付きの [PlaybackMode.POSITIONAL]
- * （立体音響再生）は、リスナーごとに個別選択できるオプション再生として提供する
- * （[modeResolver] 参照。楽曲詳細GUIでの選択を想定）。
+ * [HeadAnchorManager]がプレイヤーの目線位置へ追従させる専用マーカーエンティティを使用。
+ * 内部的には`ClientboundSoundEntityPacket`）で、音源をプレイヤー自身に追従させることで
+ * 移動による音響の乱れを防いでいる。マーカーは再生中のリスナーにのみ存在し、
+ * 再生が終わると解放される（[acquire]/[release] は [HeadAnchorManager] 側で管理）。
+ * ステレオ定位(Pan)付きの [PlaybackMode.POSITIONAL]（立体音響再生）は、リスナーごとに
+ * 個別選択できるオプション再生として提供する（[modeResolver] 参照。楽曲詳細GUIでの選択を想定）。
  *
  * 注意: `Player#playSound` はPaper上で非同期スレッドから呼び出すと
  * `IllegalStateException: Asynchronous play sound!` で例外になることを確認しているため、
@@ -77,6 +78,12 @@ class PlaybackEngine(
         val session = PlaybackSession(song = song, initialRecipients = recipients, isAmbientPlayback = isAmbientPlayback)
         if (notes.isEmpty() || recipients.isEmpty()) {
             return session
+        }
+
+        // DEFAULT方式の追従マーカーは「再生中のみ」存在させるため、開始時に確保する。
+        // (POSITIONALのみを使うリスナーにとっては未使用のまま残るだけで実害は無い)
+        for (player in recipients) {
+            headAnchorManager.acquire(player)
         }
 
         val scale = if (playbackBpm > 0) song.bpm.toDouble() / playbackBpm else 1.0
@@ -132,10 +139,14 @@ class PlaybackEngine(
             session.scheduledTasks.add(future)
         }
 
-        if (onCompletion != null) {
+        // 再生終了時に必ず追従マーカーを解放する（onCompletionの有無に関わらず実行する）。
+        run {
             val future = executor.schedule(
                 Runnable {
-                    Bukkit.getScheduler().runTask(plugin, Runnable { onCompletion(session) })
+                    Bukkit.getScheduler().runTask(plugin, Runnable {
+                        releaseAnchors(session)
+                        onCompletion?.invoke(session)
+                    })
                 },
                 totalDurationMs.toLong() + 50L,
                 TimeUnit.MILLISECONDS,
@@ -146,7 +157,17 @@ class PlaybackEngine(
         return session
     }
 
-    fun stop(session: PlaybackSession) = session.cancel()
+    fun stop(session: PlaybackSession) {
+        session.cancel()
+        releaseAnchors(session)
+    }
+
+    private fun releaseAnchors(session: PlaybackSession) {
+        if (!session.tryMarkAnchorsReleased()) return
+        for (uuid in session.initialRecipientUuids) {
+            headAnchorManager.release(uuid)
+        }
+    }
 
     fun shutdown() {
         executor.shutdownNow()

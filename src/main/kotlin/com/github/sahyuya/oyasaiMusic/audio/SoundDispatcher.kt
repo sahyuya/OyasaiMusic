@@ -13,9 +13,9 @@ import kotlin.math.sin
  *
  * [PlaybackMode.DEFAULT] (デフォルト再生):
  *   Adventure APIの `Audience#playSound(Sound, Sound.Emitter)` に、[HeadAnchorManager] が
- *   プレイヤーへ騎乗させているマーカーエンティティを渡すことで、音源をプレイヤーへ完全追従させる
- *   （内部的には `ClientboundSoundEntityPacket` が使われる）。Panという概念自体が存在しないため
- *   定位計算は行わない。
+ *   プレイヤーの目線位置へ追従させている専用マーカーエンティティを渡すことで、音源をプレイヤーへ
+ *   完全追従させる（内部的には `ClientboundSoundEntityPacket` が使われる）。Panという概念自体が
+ *   存在しないため定位計算は行わない。
  *
  * [PlaybackMode.POSITIONAL] (立体音響再生):
  *   従来通り `Player#playSound(Location, Sound, SoundCategory, float, float)` を、プレイヤーの
@@ -45,7 +45,7 @@ object SoundDispatcher {
         val bukkitSound = InstrumentMapper.soundFor(InstrumentMapper.toInstrument(note.instrument))
         val pitch = InstrumentMapper.pitchToPlaybackPitch(note.pitch)
         val volume = volumeParam(note.volume)
-        val adventureSound = AdventureSound.sound(bukkitSound.key(), AdventureSound.Source.MASTER, volume, pitch)
+        val adventureSound = AdventureSound.sound(bukkitSound.key(), AdventureSound.Source.RECORD, volume, pitch)
         val emitter = headAnchorManager.getOrCreateAnchor(recipient)
         recipient.playSound(adventureSound, emitter)
     }
