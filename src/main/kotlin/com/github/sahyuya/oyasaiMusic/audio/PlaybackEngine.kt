@@ -19,10 +19,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * 高精度にスケジュールし、実際の音送信（Bukkit API呼び出し）だけを
  * メインスレッドへ折り返して実行する。
  *
- * デフォルトの再生方式は [PlaybackMode.ENTITY_EMITTER]（Adventure APIの`Sound.Emitter.self()`、
- * 内部的には`ClientboundSoundEntityPacket`）で、音源をプレイヤー自身に追従させることで
- * 移動による音響の乱れを防いでいる。ステレオ定位(Pan)付きの旧方式は [PlaybackMode.POSITIONAL]
- * として「高音質版」のオプション再生に残してある（[SoundDispatcher]参照）。
+ * デフォルトの再生方式は [PlaybackMode.DEFAULT]（Adventure APIの`Sound.Emitter`、
+ * [HeadAnchorManager]でプレイヤーへ騎乗させたマーカーを使用。内部的には
+ * `ClientboundSoundEntityPacket`）で、音源をプレイヤー自身に追従させることで
+ * 移動による音響の乱れを防いでいる。ステレオ定位(Pan)付きの [PlaybackMode.POSITIONAL]
+ * （立体音響再生）は、リスナーごとに個別選択できるオプション再生として提供する
+ * （[modeResolver] 参照。楽曲詳細GUIでの選択を想定）。
  *
  * 注意: `Player#playSound` はPaper上で非同期スレッドから呼び出すと
  * `IllegalStateException: Asynchronous play sound!` で例外になることを確認しているため、
@@ -38,7 +40,8 @@ class PlaybackEngine(
     private val plugin: Plugin,
     private val bedrockPrefix: String,
     private val chordLimit: Int,
-    private val defaultMode: PlaybackMode = PlaybackMode.ENTITY_EMITTER,
+    private val headAnchorManager: HeadAnchorManager,
+    private val defaultMode: PlaybackMode = PlaybackMode.DEFAULT,
 ) {
 
     private val threadCounter = AtomicInteger(1)
@@ -56,8 +59,9 @@ class PlaybackEngine(
      * @param isAmbientPlayback ジュークボックス等の環境音再生かどうか（視聴回数カウント対象外の判定に使用）
      * @param onListenThresholdReached 各リスナーが総演奏時間の80%まで聴き終えた時点で呼ばれる
      * @param onCompletion 再生が最後まで完了した時点で呼ばれる
-     * @param mode 再生方式（[PlaybackMode.ENTITY_EMITTER]がデフォルト、[PlaybackMode.POSITIONAL]は
-     *             ステレオ定位付きの「高音質版」オプション再生）
+     * @param mode [modeResolver] が指定されない場合、または該当リスナーの解決結果が無い場合に使う既定の再生方式
+     * @param modeResolver リスナーごとの再生方式を解決する関数（楽曲詳細GUIでの個人設定を反映する想定）。
+     *                     nullを返した場合は [mode] にフォールバックする。
      */
     fun play(
         song: Song,
@@ -68,6 +72,7 @@ class PlaybackEngine(
         onListenThresholdReached: ((Player, Song) -> Unit)? = null,
         onCompletion: ((PlaybackSession) -> Unit)? = null,
         mode: PlaybackMode = defaultMode,
+        modeResolver: ((Player) -> PlaybackMode?)? = null,
     ): PlaybackSession {
         val session = PlaybackSession(song = song, initialRecipients = recipients, isAmbientPlayback = isAmbientPlayback)
         if (notes.isEmpty() || recipients.isEmpty()) {
@@ -93,7 +98,13 @@ class PlaybackEngine(
                     if (session.isCancelled) return@Runnable
                     Bukkit.getScheduler().runTask(plugin, Runnable {
                         for ((index, note) in group) {
-                            dispatch(session, note, bedrock = index in bedrockSurvivingIndices, mode = mode)
+                            dispatch(
+                                session = session,
+                                note = note,
+                                bedrock = index in bedrockSurvivingIndices,
+                                fallbackMode = mode,
+                                modeResolver = modeResolver,
+                            )
                         }
                     })
                 },
@@ -141,13 +152,20 @@ class PlaybackEngine(
         executor.shutdownNow()
     }
 
-    private fun dispatch(session: PlaybackSession, note: NoteEvent, bedrock: Boolean, mode: PlaybackMode) {
+    private fun dispatch(
+        session: PlaybackSession,
+        note: NoteEvent,
+        bedrock: Boolean,
+        fallbackMode: PlaybackMode,
+        modeResolver: ((Player) -> PlaybackMode?)?,
+    ) {
         for (uuid in session.recipients) {
             val player = Bukkit.getPlayer(uuid) ?: continue
             if (!player.isOnline) continue
             val isBedrockPlayer = BedrockUtil.isBedrock(player, bedrockPrefix)
             if (isBedrockPlayer && !bedrock) continue // 和音間引きでこのプレイヤー種別からは間引かれた音
-            SoundDispatcher.play(player, note, mode, isBedrock = isBedrockPlayer)
+            val mode = modeResolver?.invoke(player) ?: fallbackMode
+            SoundDispatcher.play(player, note, mode, isBedrock = isBedrockPlayer, headAnchorManager = headAnchorManager)
         }
     }
 

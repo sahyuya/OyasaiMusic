@@ -1,12 +1,16 @@
 package com.github.sahyuya.oyasaiMusic
 
+import com.github.sahyuya.oyasaiMusic.audio.HeadAnchorManager
 import com.github.sahyuya.oyasaiMusic.audio.NotePlayListener
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
+import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
+import com.github.sahyuya.oyasaiMusic.audio.PlaybackModeService
 import com.github.sahyuya.oyasaiMusic.audio.RecordingSessionManager
 import com.github.sahyuya.oyasaiMusic.command.PlaytestCommand
 import com.github.sahyuya.oyasaiMusic.command.RecordCommand
 import com.github.sahyuya.oyasaiMusic.db.DatabaseManager
 import com.github.sahyuya.oyasaiMusic.db.LikeService
+import com.github.sahyuya.oyasaiMusic.db.PlaybackPreferenceRepository
 import com.github.sahyuya.oyasaiMusic.db.SocialRepository
 import com.github.sahyuya.oyasaiMusic.db.SongRepository
 import com.github.sahyuya.oyasaiMusic.db.UserRepository
@@ -34,11 +38,17 @@ class OyasaiMusic : JavaPlugin() {
         private set
     lateinit var socialRepository: SocialRepository
         private set
+    lateinit var playbackPreferenceRepository: PlaybackPreferenceRepository
+        private set
+    lateinit var playbackModeService: PlaybackModeService
+        private set
     lateinit var likeService: LikeService
         private set
     lateinit var viewCountService: ViewCountService
         private set
     lateinit var recordingSessionManager: RecordingSessionManager
+        private set
+    lateinit var headAnchorManager: HeadAnchorManager
         private set
     lateinit var playbackEngine: PlaybackEngine
         private set
@@ -65,6 +75,8 @@ class OyasaiMusic : JavaPlugin() {
         songRepository = SongRepository(databaseManager)
         userRepository = UserRepository(databaseManager)
         socialRepository = SocialRepository(databaseManager)
+        playbackPreferenceRepository = PlaybackPreferenceRepository(databaseManager)
+        playbackModeService = PlaybackModeService(playbackPreferenceRepository)
 
         // --- サービス層 ---
         likeService = LikeService(
@@ -110,14 +122,18 @@ class OyasaiMusic : JavaPlugin() {
         } ?: logger.warning("recordコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
         // --- 再生エンジン ---
-        val defaultMode = when (config.getString("playback.default-mode", "entity_emitter")?.lowercase()) {
-            "positional" -> com.github.sahyuya.oyasaiMusic.audio.PlaybackMode.POSITIONAL
-            else -> com.github.sahyuya.oyasaiMusic.audio.PlaybackMode.ENTITY_EMITTER
+        headAnchorManager = HeadAnchorManager(this)
+        headAnchorManager.start()
+
+        val defaultMode = when (config.getString("playback.default-mode", "default")?.lowercase()) {
+            "positional" -> PlaybackMode.POSITIONAL
+            else -> PlaybackMode.DEFAULT
         }
         playbackEngine = PlaybackEngine(
             plugin = this,
             bedrockPrefix = config.getString("bedrock.name-prefix", ".") ?: ".",
             chordLimit = config.getInt("bedrock.chord-limit", 3),
+            headAnchorManager = headAnchorManager,
             defaultMode = defaultMode,
         )
 

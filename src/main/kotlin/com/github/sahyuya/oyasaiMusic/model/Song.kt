@@ -18,6 +18,9 @@ import java.util.UUID
  * @param likes 総いいね数
  * @param views 総視聴回数
  * @param fileName 紐づく音源ファイル(.bin)名
+ * @param supportsPositional 楽曲にPanの指定（看板による静的指定、または動的録音の自動算出）が
+ *        一度でもあったか。falseの場合、立体音響再生(PlaybackMode.POSITIONAL)は選択できない
+ *        （追加項目.txt: 「その楽曲にPanの指定がない場合は通常再生のみ可能」）。
  */
 data class Song(
     val id: Long? = null,
@@ -32,6 +35,7 @@ data class Song(
     val likes: Long = 0,
     val views: Long = 0,
     val fileName: String,
+    val supportsPositional: Boolean = false,
 ) {
     /**
      * 収益化（視聴ポイント・レコード売上）が有効かどうか。

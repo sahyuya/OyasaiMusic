@@ -17,8 +17,10 @@ recording:
   dynamic-record-full-volume-radius: 2.0
 
 playback:
-  # デフォルトの再生方式: entity_emitter(推奨, プレイヤーに音源追従・Panなし) / positional(高音質版, Pan対応)
-  default-mode: entity_emitter
+  # デフォルトの再生方式: default(推奨, プレイヤーに音源追従・Panなし) / positional(立体音響再生, Pan対応)
+  # 実際にどちらで再生するかは、対応楽曲(songs.supports_positional=true)であれば
+  # リスナーごとの選択(playback_preferences)が優先される。この値は選択が無い場合の既定値。
+  default-mode: default
   # 視聴カウント判定: 直近1時間の再生回数上限
   view-limit-per-hour: 3
   # 視聴カウント判定: 直近24時間の再生回数上限

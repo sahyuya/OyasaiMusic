@@ -26,11 +26,12 @@ class SongRepository(private val db: DatabaseManager) {
         recordMaterial: String,
         price: Int,
         fileName: String,
+        supportsPositional: Boolean = false,
     ): Long = db.transaction { conn ->
         conn.prepareStatement(
             """
-            INSERT INTO songs (author_uuid, title, created_at, bpm, record_material, price, status, likes, views, file_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+            INSERT INTO songs (author_uuid, title, created_at, bpm, record_material, price, status, likes, views, file_name, supports_positional)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
             """.trimIndent(),
             Statement.RETURN_GENERATED_KEYS,
         ).use { ps ->
@@ -42,6 +43,7 @@ class SongRepository(private val db: DatabaseManager) {
             ps.setInt(6, price)
             ps.setInt(7, SongStatus.DRAFT.code)
             ps.setString(8, fileName)
+            ps.setInt(9, if (supportsPositional) 1 else 0)
             ps.executeUpdate()
             ps.generatedKeys.use { keys ->
                 if (keys.next()) keys.getLong(1) else error("楽曲IDの採番に失敗しました")
@@ -156,6 +158,7 @@ class SongRepository(private val db: DatabaseManager) {
         likes = getLong("likes"),
         views = getLong("views"),
         fileName = getString("file_name"),
+        supportsPositional = getInt("supports_positional") != 0,
     )
 
     private fun ResultSet.toSongList(): List<Song> {

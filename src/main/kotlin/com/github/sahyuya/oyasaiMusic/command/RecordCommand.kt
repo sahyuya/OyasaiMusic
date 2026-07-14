@@ -183,6 +183,9 @@ class RecordCommand(
                 val file = File(audioDirectory, fileName)
                 try {
                     SongAudioFile.write(file, notes)
+                    // Panが一度でも指定された音符があれば、その楽曲は立体音響再生に対応する
+                    // （追加項目.txt: 「制作時にPanの指定があった場合は立体音響再生を可能にする」）。
+                    val supportsPositional = notes.any { it.pan != 0 }
                     val songId = songRepository.insertDraft(
                         authorUuid = player.uniqueId,
                         title = "無題の楽曲",
@@ -190,6 +193,7 @@ class RecordCommand(
                         recordMaterial = defaultRecordMaterial,
                         price = defaultPrice,
                         fileName = fileName,
+                        supportsPositional = supportsPositional,
                     )
                     Bukkit.getScheduler().runTask(plugin, Runnable {
                         player.sendMessage(

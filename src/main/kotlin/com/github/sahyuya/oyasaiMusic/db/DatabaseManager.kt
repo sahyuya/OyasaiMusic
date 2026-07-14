@@ -13,9 +13,13 @@ import java.sql.Statement
  * 「プレイリスト（複数）」機能を実現するために `playlists` / `playlist_songs`
  * テーブルを追加している（元のデータ設計書には favorites テーブルのみが
  * 定義されており、複数プレイリストを表現するテーブルが無かったため）。
+ * また、`songs.supports_positional`（楽曲にPan指定があるか）と、
+ * `playback_preferences`（リスナーごとの再生方式=デフォルト/立体音響の選択）も追加している
+ * （追加項目.txt の「立体音響再生は…個々のリスナーが…選べて、その再生方法の選択を保存する」
+ * に対応するため）。
  *
  * SQLite JDBCの単一Connectionはスレッドセーフではないため、
- * 全てのアクセスは transaction / query を介して同期的に行うこと。
+ * 全てのアクセスは [transaction] / [query] を介して同期的に行うこと。
  * 呼び出し側は必ず非同期スレッド（BukkitSchedulerのasync等）から呼び出すこと。
  */
 class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
@@ -68,7 +72,8 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                         status          INTEGER NOT NULL DEFAULT 0,
                         likes           INTEGER NOT NULL DEFAULT 0,
                         views           INTEGER NOT NULL DEFAULT 0,
-                        file_name       TEXT NOT NULL
+                        file_name       TEXT NOT NULL,
+                        supports_positional INTEGER NOT NULL DEFAULT 0
                     );
                     """.trimIndent()
                 )
@@ -167,6 +172,18 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                 )
                 st.executeUpdate(
                     "CREATE INDEX IF NOT EXISTS idx_playlist_songs_playlist ON playlist_songs(playlist_id, position);"
+                )
+
+                // --- ここから: 追加項目.txt の「リスナーごとの再生方式選択」機能のために追加したテーブル ---
+                st.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS playback_preferences (
+                        user_uuid   BLOB(16) NOT NULL,
+                        song_id     INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+                        mode        INTEGER NOT NULL,
+                        PRIMARY KEY (user_uuid, song_id)
+                    );
+                    """.trimIndent()
                 )
             }
         }
