@@ -5,15 +5,22 @@ import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackModeService
 import com.github.sahyuya.oyasaiMusic.audio.RecordingSessionManager
+import com.github.sahyuya.oyasaiMusic.command.GetMusicPlayerCommand
+import com.github.sahyuya.oyasaiMusic.command.MusicMenuCommand
 import com.github.sahyuya.oyasaiMusic.command.PlaytestCommand
 import com.github.sahyuya.oyasaiMusic.command.RecordCommand
 import com.github.sahyuya.oyasaiMusic.db.DatabaseManager
 import com.github.sahyuya.oyasaiMusic.db.LikeService
 import com.github.sahyuya.oyasaiMusic.db.PlaybackPreferenceRepository
+import com.github.sahyuya.oyasaiMusic.db.PlaylistRepository
+import com.github.sahyuya.oyasaiMusic.db.RankingCacheService
+import com.github.sahyuya.oyasaiMusic.db.RankingRepository
 import com.github.sahyuya.oyasaiMusic.db.SocialRepository
 import com.github.sahyuya.oyasaiMusic.db.SongRepository
 import com.github.sahyuya.oyasaiMusic.db.UserRepository
 import com.github.sahyuya.oyasaiMusic.db.ViewCountService
+import com.github.sahyuya.oyasaiMusic.gui.MenuManager
+import com.github.sahyuya.oyasaiMusic.gui.PlayerControllerStateService
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
 
@@ -21,8 +28,9 @@ import java.io.File
  * OyasaiMusic プラグインのエントリーポイント。
  *
  * 実装フェーズ方針（サヒュヤ氏との合意）:
- *   1. コア基盤（DB・音源フォーマット・録音/再生エンジン） ← 本ファイルはこのフェーズ
- *   2. GUI（6×9 SPA構造の各画面） ← 次フェーズで実装予定
+ *   1. コア基盤（DB・音源フォーマット・録音/再生エンジン） ← 完了
+ *   2. GUI（6×9 SPA構造の各画面） ← 本ファイルは着手フェーズ（GUIフェーズで追加した箇所は
+ *      コメントで明示している）
  *
  * このクラスは各コンポーネントの初期化と依存関係の配線のみを担当し、
  * ロジック本体はそれぞれのクラスに委譲する。
@@ -37,6 +45,8 @@ class OyasaiMusic : JavaPlugin() {
         private set
     lateinit var socialRepository: SocialRepository
         private set
+    lateinit var playlistRepository: PlaylistRepository
+        private set
     lateinit var playbackPreferenceRepository: PlaybackPreferenceRepository
         private set
     lateinit var playbackModeService: PlaybackModeService
@@ -50,6 +60,16 @@ class OyasaiMusic : JavaPlugin() {
     lateinit var playbackEngine: PlaybackEngine
         private set
     lateinit var audioDirectory: File
+        private set
+
+    // ---- GUIフェーズで追加 ----
+    lateinit var rankingRepository: RankingRepository
+        private set
+    lateinit var rankingCacheService: RankingCacheService
+        private set
+    lateinit var controllerStateService: PlayerControllerStateService
+        private set
+    lateinit var menuManager: MenuManager
         private set
 
     override fun onEnable() {
@@ -72,8 +92,10 @@ class OyasaiMusic : JavaPlugin() {
         songRepository = SongRepository(databaseManager)
         userRepository = UserRepository(databaseManager)
         socialRepository = SocialRepository(databaseManager)
+        playlistRepository = PlaylistRepository(databaseManager) // GUIフェーズで追加
         playbackPreferenceRepository = PlaybackPreferenceRepository(databaseManager)
         playbackModeService = PlaybackModeService(playbackPreferenceRepository)
+        rankingRepository = RankingRepository(databaseManager) // GUIフェーズで追加
 
         // --- サービス層 ---
         likeService = LikeService(
@@ -140,7 +162,26 @@ class OyasaiMusic : JavaPlugin() {
             cmd.tabCompleter = executor
         } ?: logger.warning("playtestコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
-        logger.info("OyasaiMusic (コア基盤フェーズ) を有効化しました。")
+        // ============ ここから GUIフェーズで追加 ============
+        controllerStateService = PlayerControllerStateService()
+        rankingCacheService = RankingCacheService(this, rankingRepository)
+        rankingCacheService.start()
+        menuManager = MenuManager(this)
+        server.pluginManager.registerEvents(menuManager, this)
+        server.pluginManager.registerEvents(PhysicalMusicPlayerItem(this, menuManager), this)
+
+        getCommand("musicmenu")?.let { cmd ->
+            cmd.setExecutor(MusicMenuCommand(this))
+        } ?: logger.warning("musicmenuコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+
+        getCommand("getmusicplayer")?.let { cmd ->
+            val executor = GetMusicPlayerCommand()
+            cmd.setExecutor(executor)
+            cmd.tabCompleter = executor
+        } ?: logger.warning("getmusicplayerコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+        // ============ GUIフェーズ追加ここまで ============
+
+        logger.info("OyasaiMusic (GUIフェーズ着手) を有効化しました。")
     }
 
     override fun onDisable() {
@@ -149,4 +190,3 @@ class OyasaiMusic : JavaPlugin() {
         logger.info("OyasaiMusicを無効化しました。")
     }
 }
-

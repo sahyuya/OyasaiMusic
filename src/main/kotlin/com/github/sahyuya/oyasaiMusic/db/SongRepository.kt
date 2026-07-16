@@ -14,7 +14,7 @@ import java.util.UUID
 class SongRepository(private val db: DatabaseManager) {
 
     /**
-     * 新規楽曲を下書き(status=DRAFT)として登録する。
+     * 新規楽曲を下書き(status=DRAFT, published=false)として登録する。
      * 録音システム（グリッド型/回路型/動的録音）は録音完了後に必ずこれを呼び出す。
      *
      * @return 採番された楽曲ID
@@ -30,8 +30,8 @@ class SongRepository(private val db: DatabaseManager) {
     ): Long = db.transaction { conn ->
         conn.prepareStatement(
             """
-            INSERT INTO songs (author_uuid, title, created_at, bpm, record_material, price, status, likes, views, file_name, supports_positional)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+            INSERT INTO songs (author_uuid, title, created_at, bpm, record_material, price, status, likes, views, file_name, supports_positional, published)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0)
             """.trimIndent(),
             Statement.RETURN_GENERATED_KEYS,
         ).use { ps ->
@@ -59,10 +59,12 @@ class SongRepository(private val db: DatabaseManager) {
     }
 
     fun findByAuthor(authorUuid: UUID, includeDrafts: Boolean = true): List<Song> = db.transaction { conn ->
+        // includeDrafts=false は「他人から見た公開作品一覧」を意味するため、
+        // GUIフェーズより審査ステータス(status)ではなく公開フラグ(published)で絞り込む。
         val sql = if (includeDrafts) {
             "SELECT * FROM songs WHERE author_uuid = ? ORDER BY created_at DESC"
         } else {
-            "SELECT * FROM songs WHERE author_uuid = ? AND status != 0 ORDER BY created_at DESC"
+            "SELECT * FROM songs WHERE author_uuid = ? AND published = 1 ORDER BY created_at DESC"
         }
         conn.prepareStatement(sql).use { ps ->
             ps.setBytes(1, UuidUtil.toBytes(authorUuid))
@@ -70,14 +72,14 @@ class SongRepository(private val db: DatabaseManager) {
         }
     }
 
-    /** 公開済み（下書き・却下を除く）楽曲を条件付きで検索する。 */
+    /** 公開済み(published=true)の楽曲を条件付きで検索する。 */
     fun searchPublished(
         titleLike: String? = null,
         sort: SongSort = SongSort.CREATED_AT_DESC,
         limit: Int = 200,
         offset: Int = 0,
     ): List<Song> = db.transaction { conn ->
-        val where = StringBuilder("WHERE status != ${SongStatus.DRAFT.code}")
+        val where = StringBuilder("WHERE published = 1")
         if (titleLike != null) where.append(" AND title LIKE ?")
         val sql = "SELECT * FROM songs $where ORDER BY ${sort.orderBy} LIMIT ? OFFSET ?"
         conn.prepareStatement(sql).use { ps ->
@@ -92,6 +94,15 @@ class SongRepository(private val db: DatabaseManager) {
     fun updateStatus(id: Long, status: SongStatus) = db.transaction { conn ->
         conn.prepareStatement("UPDATE songs SET status = ? WHERE id = ?").use { ps ->
             ps.setInt(1, status.code)
+            ps.setLong(2, id)
+            ps.executeUpdate()
+        }
+    }
+
+    /** GUIフェーズで追加: 公開/非公開の独立フラグを切り替える（楽曲設定画面「公開」ボタン用）。 */
+    fun setPublished(id: Long, published: Boolean) = db.transaction { conn ->
+        conn.prepareStatement("UPDATE songs SET published = ? WHERE id = ?").use { ps ->
+            ps.setInt(1, if (published) 1 else 0)
             ps.setLong(2, id)
             ps.executeUpdate()
         }
@@ -159,6 +170,7 @@ class SongRepository(private val db: DatabaseManager) {
         views = getLong("views"),
         fileName = getString("file_name"),
         supportsPositional = getInt("supports_positional") != 0,
+        published = getInt("published") != 0,
     )
 
     private fun ResultSet.toSongList(): List<Song> {

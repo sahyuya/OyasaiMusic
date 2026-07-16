@@ -22,6 +22,18 @@ commands:
       /playtest <楽曲ID>      - 指定楽曲を再生
       /playtest stop          - 再生中の楽曲を停止
     permission: oyasaimusic.use
+  musicmenu:
+    description: トップメニュー(メインメニュー)GUIを開く（GUIフェーズで追加）
+    aliases: [mm]
+    usage: /musicmenu - メインメニューGUIを開く
+    permission: oyasaimusic.use
+  getmusicplayer:
+    description: 物理アイテム「音楽プレイヤー」を取得する（GUIフェーズで追加）
+    aliases: [getmp]
+    usage: |
+      /getmusicplayer          - 自分自身に音楽プレイヤーを配布
+      /getmusicplayer <player> - 指定プレイヤーに配布（OP/コンソール専用）
+    permission: oyasaimusic.use
 
 permissions:
   oyasaimusic.admin:

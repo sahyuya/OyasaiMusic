@@ -18,6 +18,12 @@ import java.sql.Statement
  * （追加項目.txt の「立体音響再生は…個々のリスナーが…選べて、その再生方法の選択を保存する」
  * に対応するため）。
  *
+ * GUIフェーズで追加: `songs.published`（公開/非公開の独立フラグ）。
+ * サヒュヤ氏の指示により、「公開」を審査ステータス(`status`)とは別概念として扱うことになったため、
+ * 既存の`status`(下書き/仮OK/永続OK/却下=審査結果)とは独立したカラムとして追加した
+ * （公開はプレイヤーが自由に切替可能、審査は別途OPが行う）。
+ * 既存DBに対しては [migrateSchema] で `ALTER TABLE` により後付けする。
+ *
  * SQLite JDBCの単一Connectionはスレッドセーフではないため、
  * 全てのアクセスは [transaction] / [query] を介して同期的に行うこと。
  * 呼び出し側は必ず非同期スレッド（BukkitSchedulerのasync等）から呼び出すこと。
@@ -38,6 +44,7 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
             st.execute("PRAGMA foreign_keys=ON;")
         }
         createSchema()
+        migrateSchema()
     }
 
     fun close() {
@@ -73,13 +80,15 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                         likes           INTEGER NOT NULL DEFAULT 0,
                         views           INTEGER NOT NULL DEFAULT 0,
                         file_name       TEXT NOT NULL,
-                        supports_positional INTEGER NOT NULL DEFAULT 0
+                        supports_positional INTEGER NOT NULL DEFAULT 0,
+                        published       INTEGER NOT NULL DEFAULT 0
                     );
                     """.trimIndent()
                 )
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_songs_author ON songs(author_uuid);")
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_songs_status ON songs(status);")
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_songs_created_at ON songs(created_at);")
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_songs_published ON songs(published);")
 
                 st.executeUpdate(
                     """
@@ -187,5 +196,32 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                 )
             }
         }
+    }
+
+    /**
+     * `CREATE TABLE IF NOT EXISTS` だけでは既存DBに新しいカラムは追加されないため、
+     * GUIフェーズで新設したカラムをここで後付けする。`PRAGMA table_info` で存在確認してから
+     * `ALTER TABLE ... ADD COLUMN` を実行することで、複数回の起動でも安全に実行できる。
+     */
+    private fun migrateSchema() {
+        transaction { conn ->
+            if (!columnExists(conn, "songs", "published")) {
+                conn.createStatement().use { st ->
+                    st.executeUpdate("ALTER TABLE songs ADD COLUMN published INTEGER NOT NULL DEFAULT 0;")
+                }
+                plugin.logger.info("DBマイグレーション: songs.published カラムを追加しました。")
+            }
+        }
+    }
+
+    private fun columnExists(conn: Connection, table: String, column: String): Boolean {
+        conn.prepareStatement("PRAGMA table_info($table)").use { ps ->
+            ps.executeQuery().use { rs ->
+                while (rs.next()) {
+                    if (rs.getString("name").equals(column, ignoreCase = true)) return true
+                }
+            }
+        }
+        return false
     }
 }
