@@ -73,10 +73,9 @@ class SongListMenu(
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, ownTab, state, sortLabel = sortDisplayName(currentSort()))
-        ContentGrid.fill(inventory, Material.GRAY_STAINED_GLASS_PANE)
 
         LIST_SLOTS.forEachIndexed { index, slot ->
-            pageSongs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it)) }
+            inventory.setItem(slot, pageSongs.getOrNull(index)?.let(::songIcon))
         }
     }
 
@@ -128,22 +127,9 @@ class SongListMenu(
         val action = resolveAction(event, isBedrock)
         when (action) {
             ActionMode.PRIMARY -> playSong(song)
-            ActionMode.SECONDARY -> openDetailsOrSettings(song)
+            ActionMode.SECONDARY -> menuManager.open(viewer, SongDetailScreen(plugin, menuManager, viewer, song))
             ActionMode.TERTIARY -> likeSong(song)
             ActionMode.QUATERNARY -> favoriteSong(song)
-        }
-    }
-
-    /**
-     * 本来はここで「楽曲詳細画面」を開くべきだが未実装のため、暫定的に
-     * 作者本人またはOPであれば楽曲設定画面(SongSettingsScreen)へ直接遷移させる
-     * （楽曲詳細画面の実装後、そちらの「設定」ボタン経由に差し替える想定）。
-     */
-    private fun openDetailsOrSettings(song: Song) {
-        if (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin")) {
-            menuManager.open(viewer, SongSettingsScreen(plugin, menuManager, viewer, song))
-        } else {
-            viewer.sendMessage("§e楽曲詳細画面は近日実装予定です。（${song.title}）")
         }
     }
 
@@ -172,7 +158,8 @@ class SongListMenu(
                     notes = audio.notes,
                     recipients = listOf(viewer),
                     mode = mode,
-                    onListenThresholdReached = { player, s -> plugin.viewCountService.registerView(player, s, isAmbientPlayback = false) },
+                    onListenThresholdReached = { player, s ->
+                        plugin.viewCountService.registerView(player, s, isAmbientPlayback = false) },
                     onCompletion = { plugin.controllerStateService.stateFor(viewer.uniqueId).isPlaying = false },
                 )
                 val state = plugin.controllerStateService.stateFor(viewer.uniqueId)

@@ -74,7 +74,6 @@ class SongSettingsScreen(
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, null, state, sortLabel = "-")
-        ContentGrid.fill(inventory, Material.GRAY_STAINED_GLASS_PANE)
 
         if (!hasAccess()) {
             inventory.setItem(
@@ -84,6 +83,7 @@ class SongSettingsScreen(
                     .build(),
             )
             inventory.setItem(backSlot, backButton())
+            ContentGrid.fillBorderIfEmpty(inventory, Material.BLACK_STAINED_GLASS_PANE)
             return
         }
 
@@ -101,6 +101,7 @@ class SongSettingsScreen(
         inventory.setItem(publishSlot, publishItem())
         inventory.setItem(backSlot, backButton())
         inventory.setItem(deleteSlot, deleteItem())
+        ContentGrid.fillBorderIfEmpty(inventory, Material.BLACK_STAINED_GLASS_PANE)
     }
 
     private fun previewItem() = GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)

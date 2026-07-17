@@ -22,17 +22,25 @@ object ContentGrid {
     val SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
 
     /**
-     * コンテンツ領域を板ガラスで埋める（サヒュヤ氏の指示: 参照画像の背景装飾を再現）。
-     * 実際のコンテンツはこの後で個別に上書きする想定。
-     *
-     * 色の使い分け（参照画像からの解釈、要確認）:
-     *   - 検索画面(赤タブ) → RED_STAINED_GLASS_PANE
-     *   - お気に入り♪プレイリスト関連(緑タブ) → LIME_STAINED_GLASS_PANE
-     *   - それ以外(一覧・詳細・設定等、コンテンツ密度が高い画面) → GRAY_STAINED_GLASS_PANE
+     * 5×8ディスプレイの外枠(外周)スロット一覧（サヒュヤ氏の指示による）。
+     * 上端(row0)全体・下端(row4)全体・左右端(row1〜3の列1,8)のみ。中央部分は含まない。
      */
-    fun fill(inventory: Inventory, material: Material = Material.GRAY_STAINED_GLASS_PANE) {
+    val BORDER_SLOTS: List<Int> = listOf(
+        1, 2, 3, 4, 5, 6, 7, 8,
+        10, 17,
+        19, 26,
+        28, 35,
+        37, 38, 39, 40, 41, 42, 43, 44,
+    )
+
+    /**
+     * 外枠スロットのうち、まだ何も置かれていない(null)スロットのみを板ガラスで埋める
+     * （サヒュヤ氏の指示: 「空き枠であったら置いて」）。実際のコンテンツは必ずこれより先に
+     * 描画してから呼び出すこと。
+     */
+    fun fillBorderIfEmpty(inventory: Inventory, material: Material) {
         val pane = GuiItemBuilder.filler(material)
-        SLOTS.forEach { inventory.setItem(it, pane) }
+        BORDER_SLOTS.forEach { slot -> if (inventory.getItem(slot) == null) inventory.setItem(slot, pane) }
     }
 }
 

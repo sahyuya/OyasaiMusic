@@ -56,8 +56,8 @@ class MainMenuScreen(
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, null, state, sortLabel = "-")
-        ContentGrid.fill(inventory, Material.GRAY_STAINED_GLASS_PANE)
         renderRankingRow()
+        ContentGrid.fillBorderIfEmpty(inventory, Material.WHITE_STAINED_GLASS_PANE)
     }
 
     private fun renderRankingRow() {
@@ -171,7 +171,7 @@ class MainMenuScreen(
         val values = RankingMetric.entries
         val current = columnMetric.getValue(column)
         columnMetric[column] = values[(values.indexOf(current) + 1) % values.size]
-        renderRankingRow()
+        render()
     }
 
     private fun claimRewards() {

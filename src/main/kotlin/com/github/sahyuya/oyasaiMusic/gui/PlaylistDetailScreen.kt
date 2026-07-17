@@ -20,12 +20,16 @@ import java.io.File
  * 画面を開いた時点で先頭曲の再生を開始し、再生完了ごとに次の曲へ自動的に進める。
  *
  * クリック動作（UI/UX設計書5章「お気に入り・プレイリスト (登録楽曲一覧)」）:
- *   左クリック=再生 / Shift+左=詳細を開く / 右クリック=並び替え / Shift+右=リストから除外(要確認)
+ *   左クリック=再生 / Shift+左=詳細を開く / 右クリック=並び替え(ドラッグ) / Shift+右=リストから除外(要確認)
  *
- * 【簡易実装（要確認）】
- * 「並び替え(ドラッグ可)」は真のドラッグ操作ではなく、Anvilで移動先の順位を数値入力する方式で代替。
+ * 【並び替え(ドラッグ)の実装方式（要確認）】
+ * サヒュヤ氏の要望により実際のドラッグ操作を実装したが、Bukkitのカーソル(掴み上げ)を
+ * そのまま使う方式は、GUI外へのクリックでアイテムが実体化＝複製されてしまうリスクがあり、
+ * この環境ではライブ検証ができないため採用していない。代わりに「右クリックで曲を選択
+ * →別の曲を右クリックでそこへ挿入（同じ曲の再クリックでキャンセル）」という、実アイテムを
+ * 一切動かさない安全な2クリック方式にしている。見た目はカーソルに乗らないが、
+ * 選択中の曲が光る演出で「持ち上げている」ことを表現している。
  * お気に入り(favoritesテーブル)には並び順の概念が無いため、並び替えは実プレイリストのみ対応。
- * 「共有」同様、真のドラッグ操作が必要な場合は改めて実装方針を相談したい。
  *
  * このリストは左列タブから直接遷移する画面ではない（[FavoritesPlaylistsScreen]からの
  * ドリルダウン）ため、サヒュヤ氏指定の「戻る」ボタン対象3画面には含めていない
@@ -51,6 +55,8 @@ class PlaylistDetailScreen private constructor(
     private var songs: List<Song> = emptyList()
     private var pendingRemoveSongId: Long? = null
     private var autoPlayIndex = 0
+    private var draggingSongId: Long? = null
+    private var draggingFromIndex: Int? = null
 
     init {
         reload(autoPlayFirst = true)
@@ -74,32 +80,47 @@ class PlaylistDetailScreen private constructor(
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, null, state, sortLabel = "設定順")
-        ContentGrid.fill(inventory, Material.LIME_STAINED_GLASS_PANE)
 
         SLOTS.forEachIndexed { index, slot ->
-            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it)) }
+            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it, index)) }
         }
     }
 
-    private fun songIcon(song: Song): org.bukkit.inventory.ItemStack {
+    private fun songIcon(song: Song, index: Int): org.bukkit.inventory.ItemStack {
         val confirming = pendingRemoveSongId == song.id
+        val dragging = draggingSongId == song.id
+        val extraLore = when {
+            dragging -> arrayOf(Component.text("移動中… 移動先をクリック（再クリックでキャンセル）", NamedTextColor.AQUA))
+            draggingSongId != null -> arrayOf(Component.text("クリックでここに移動", NamedTextColor.AQUA))
+            confirming -> arrayOf(Component.text("もう一度Shift+右クリックで除外確定", NamedTextColor.RED))
+            else -> emptyArray()
+        }
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
             .name(Component.text(song.title, NamedTextColor.WHITE))
             .lore(
                 Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
                 Component.text("左:再生 Shift+左:詳細", NamedTextColor.DARK_GRAY),
-                Component.text("右:並び替え Shift+右:除外", NamedTextColor.DARK_GRAY),
-                *(if (confirming) arrayOf(Component.text("もう一度Shift+右クリックで除外確定", NamedTextColor.RED)) else emptyArray()),
+                Component.text("右:掴んで移動 Shift+右:除外", NamedTextColor.DARK_GRAY),
+                *extraLore,
             )
-            .glint(confirming)
+            .glint(confirming || dragging)
             .build()
     }
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
-
         val index = SLOTS.indexOf(slot)
+
+        // ドラッグ中は次のクリックを常に「ドロップ」として扱う。
+        // 実アイテム(カーソル)は一切動かさず内部状態(DBの並び順)だけを更新する安全な方式にしている
+        // （実カーソルでの掴み上げ方式は、GUI外へのクリックでアイテムが実体化＝複製されうるリスクが
+        // あり、この環境ではライブ検証ができないため採用していない。要確認）。
+        if (draggingSongId != null) {
+            if (index != -1) dropDragged(index) else cancelDrag()
+            return
+        }
+
+        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
         if (index == -1) return
         val song = songs.getOrNull(index) ?: return
         if (song.id != pendingRemoveSongId) pendingRemoveSongId = null
@@ -115,41 +136,53 @@ class PlaylistDetailScreen private constructor(
         when (action) {
             ActionMode.PRIMARY -> playIndex(index, advanceOnCompletion = true)
             ActionMode.SECONDARY -> openDetailsOrSettings(song)
-            ActionMode.TERTIARY -> reorder(song)
+            ActionMode.TERTIARY -> beginDrag(song, index)
             ActionMode.QUATERNARY -> confirmOrRemove(song)
         }
     }
 
     private fun openDetailsOrSettings(song: Song) {
-        if (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin")) {
-            menuManager.open(viewer, SongSettingsScreen(plugin, menuManager, viewer, song))
-        } else {
-            viewer.sendMessage("§e楽曲詳細画面は近日実装予定です。（${song.title}）")
-        }
+        menuManager.open(viewer, SongDetailScreen(plugin, menuManager, viewer, song))
     }
 
-    private fun reorder(song: Song) {
+    private fun beginDrag(song: Song, index: Int) {
         if (playlist == null) {
             viewer.sendMessage("§7お気に入りには並び順がありません。")
             return
         }
-        AnvilTextInput.open(plugin, viewer, Component.text("移動先の順位(1〜${songs.size})"), initialText = (songs.indexOf(song) + 1).toString()) { text ->
-            val target = text.toIntOrNull()
-            if (target == null || target < 1 || target > songs.size) {
-                Bukkit.getScheduler().runTask(plugin, Runnable { viewer.sendMessage("§c1〜${songs.size}の範囲で指定してください。") })
-                return@open
-            }
-            val currentIndex = songs.indexOf(song)
-            val step = if (target - 1 > currentIndex) 1 else -1
-            Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-                var pos = currentIndex
-                while (pos != target - 1) {
-                    plugin.playlistRepository.moveSong(requireNotNull(playlist.id), requireNotNull(song.id), step)
-                    pos += step
-                }
-                Bukkit.getScheduler().runTask(plugin, Runnable { reload() })
-            })
+        if (draggingSongId == song.id) {
+            cancelDrag()
+            return
         }
+        draggingSongId = song.id
+        draggingFromIndex = index
+        viewer.sendMessage("§b「${song.title}」を持ち上げました。移動先の曲をクリックしてください（同じ曲を再クリックでキャンセル）。")
+        render()
+    }
+
+    private fun cancelDrag() {
+        draggingSongId = null
+        draggingFromIndex = null
+        render()
+    }
+
+    private fun dropDragged(targetIndex: Int) {
+        val songId = draggingSongId ?: return
+        val fromIndex = draggingFromIndex
+        draggingSongId = null
+        draggingFromIndex = null
+        if (playlist == null) return
+        if (targetIndex == fromIndex) {
+            render()
+            return
+        }
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+            plugin.playlistRepository.reorderToPosition(requireNotNull(playlist.id), songId, targetIndex)
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                viewer.sendMessage("§a曲順を変更しました。")
+                reload()
+            })
+        })
     }
 
     private fun confirmOrRemove(song: Song) {
@@ -210,7 +243,7 @@ class PlaylistDetailScreen private constructor(
             return
         }
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        if (state.loopMode != LoopMode.OFF && songs.isNotEmpty()) {
+        if (state.loopMode != com.github.sahyuya.oyasaiMusic.gui.LoopMode.OFF && songs.isNotEmpty()) {
             playIndex(0, advanceOnCompletion = true)
         }
     }

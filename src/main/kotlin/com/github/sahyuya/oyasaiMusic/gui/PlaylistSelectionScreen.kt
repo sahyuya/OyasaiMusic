@@ -48,7 +48,6 @@ class PlaylistSelectionScreen(
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, null, state, sortLabel = "-")
-        ContentGrid.fill(inventory, Material.LIME_STAINED_GLASS_PANE)
 
         inventory.setItem(
             SLOTS[FAVORITES_INDEX],

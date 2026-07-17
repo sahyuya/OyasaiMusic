@@ -53,7 +53,6 @@ class FavoritesPlaylistsScreen(
     private fun render(favoriteCount: Int = -1) {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, NavTab.FAVORITES_PLAYLISTS, state, sortLabel = "-")
-        ContentGrid.fill(inventory, Material.LIME_STAINED_GLASS_PANE)
 
         inventory.setItem(SLOTS[FAVORITES_INDEX], favoritesIcon(favoriteCount))
 
@@ -71,6 +70,8 @@ class FavoritesPlaylistsScreen(
                     .build(),
             )
         }
+
+        ContentGrid.fillBorderIfEmpty(inventory, Material.LIME_STAINED_GLASS_PANE)
     }
 
     private fun favoritesIcon(favoriteCount: Int) = GuiItemBuilder(Material.NETHER_STAR)
@@ -173,11 +174,32 @@ class FavoritesPlaylistsScreen(
     }
 
     /**
-     * 「共有」の簡易実装: 他プレイヤーへ直接送る仕組みが未定義のため、
-     * 現状は自分にプレイリスト概要をチャット表示するのみ（要確認: 本来の共有先・方法）。
+     * 「共有」: 指定したオンラインプレイヤーへ、この曲順のままコピーしたプレイリストを
+     * 新規作成する形で送る（サヒュヤ氏の指示）。共有先はオンラインプレイヤーに限定する
+     * （オフラインだと即座に通知できずUUID解決の確実性も下がるため）。
      */
     private fun sharePlaylist(playlist: Playlist) {
-        viewer.sendMessage("§d[共有] §fプレイリスト「${playlist.name}」（${playlist.songCount}曲）")
-        viewer.sendMessage("§7共有機能の詳細仕様は今後確定予定です。")
+        AnvilTextInput.open(plugin, viewer, Component.text("共有先のプレイヤー名")) { targetName ->
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                val target = Bukkit.getPlayerExact(targetName)
+                if (target == null) {
+                    viewer.sendMessage("§cオンラインのプレイヤーが見つかりません: $targetName")
+                    return@Runnable
+                }
+                if (target.uniqueId == viewer.uniqueId) {
+                    viewer.sendMessage("§c自分自身には共有できません。")
+                    return@Runnable
+                }
+                Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+                    val songs = plugin.playlistRepository.listSongs(requireNotNull(playlist.id))
+                    val newPlaylistId = plugin.playlistRepository.create(target.uniqueId, playlist.name)
+                    songs.forEach { song -> song.id?.let { plugin.playlistRepository.addSong(newPlaylistId, it) } }
+                    Bukkit.getScheduler().runTask(plugin, Runnable {
+                        viewer.sendMessage("§a${target.name} にプレイリスト「${playlist.name}」(${songs.size}曲)を共有しました。")
+                        target.sendMessage("§d${viewer.name} からプレイリスト「${playlist.name}」が共有されました！ §7(お気に入り♪プレイリストに追加されました)")
+                    })
+                })
+            })
+        }
     }
 }

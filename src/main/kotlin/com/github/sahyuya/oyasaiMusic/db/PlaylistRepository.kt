@@ -101,11 +101,38 @@ class PlaylistRepository(private val db: DatabaseManager) {
     }
 
     /**
-     * 指定した曲を1つ前/後の曲と順序を入れ替える
-     * （UI/UX設計書5章「並び替え(ドラッグ可)」の簡易版。真のドラッグ操作は今後の改善余地、
-     * 現状は右クリックで1つ上へ、Shift+右クリックで1つ下へ、のような操作を想定）。
-     *
-     * @param direction -1で1つ上(前)へ、+1で1つ下(後)へ
+     * 指定した曲を、リスト内の任意の位置(0始まり)へ移動する
+     * （UI/UX設計書5章「並び替え(ドラッグ可)」対応。真のドラッグ操作は[PlaylistDetailScreen]側で
+     * クリックによる掴み上げ/設置として実装し、ここでは全曲の位置を振り直すだけのシンプルな実装とする）。
+     */
+    fun reorderToPosition(playlistId: Long, songId: Long, targetIndex: Int) = db.transaction { conn ->
+        val ordered = conn.prepareStatement(
+            "SELECT song_id FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC"
+        ).use { ps ->
+            ps.setLong(1, playlistId)
+            ps.executeQuery().use { rs ->
+                val list = mutableListOf<Long>()
+                while (rs.next()) list += rs.getLong("song_id")
+                list
+            }
+        }.toMutableList()
+
+        if (!ordered.remove(songId)) return@transaction
+        val insertAt = targetIndex.coerceIn(0, ordered.size)
+        ordered.add(insertAt, songId)
+
+        ordered.forEachIndexed { index, id ->
+            conn.prepareStatement("UPDATE playlist_songs SET position = ? WHERE playlist_id = ? AND song_id = ?").use { ps ->
+                ps.setInt(1, index)
+                ps.setLong(2, playlistId)
+                ps.setLong(3, id)
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    /**
+     * 指定した曲を1つ前/後の曲と順序を入れ替える（[reorderToPosition]の単純な特殊系として残置）。
      */
     fun moveSong(playlistId: Long, songId: Long, direction: Int) = db.transaction { conn ->
         val positions = conn.prepareStatement(
