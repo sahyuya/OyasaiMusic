@@ -47,7 +47,7 @@ class PlaylistSelectionScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-")
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
 
         inventory.setItem(
             SLOTS[FAVORITES_INDEX],
@@ -92,7 +92,7 @@ class PlaylistSelectionScreen(
             menuManager.openPrevious(viewer)
             return
         }
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
 
         val index = SLOTS.indexOf(slot)
         if (index == -1) return

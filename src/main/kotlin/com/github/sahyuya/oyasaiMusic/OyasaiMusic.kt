@@ -21,6 +21,7 @@ import com.github.sahyuya.oyasaiMusic.db.UserRepository
 import com.github.sahyuya.oyasaiMusic.db.ViewCountService
 import com.github.sahyuya.oyasaiMusic.gui.MenuManager
 import com.github.sahyuya.oyasaiMusic.gui.PlayerControllerStateService
+import com.github.sahyuya.oyasaiMusic.gui.PlaybackController
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
 
@@ -71,6 +72,8 @@ class OyasaiMusic : JavaPlugin() {
         private set
     lateinit var menuManager: MenuManager
         private set
+    lateinit var playbackController: PlaybackController
+        private set
 
     override fun onEnable() {
         // --- FAWE必須依存チェック（plugin.ymlのdependでも保証されるが、明示的なメッセージを出すため二重チェック） ---
@@ -115,6 +118,17 @@ class OyasaiMusic : JavaPlugin() {
             viewsPerPoint = config.getInt("playback.views-per-point", 10),
         )
 
+        // ============ GUIフェーズで追加: 録音システムより前に用意する必要がある ============
+        // （RecordCommandが「録音完了後に楽曲設定画面を自動で開く」ためmenuManagerを必要とするため）
+        controllerStateService = PlayerControllerStateService()
+        rankingCacheService = RankingCacheService(this, rankingRepository)
+        rankingCacheService.start()
+        menuManager = MenuManager(this)
+        server.pluginManager.registerEvents(menuManager, this)
+        playbackController = PlaybackController(this, menuManager) // GUIフェーズで追加
+        server.pluginManager.registerEvents(PhysicalMusicPlayerItem(this, menuManager), this)
+        // ============================================================================
+
         // --- 録音システム ---
         recordingSessionManager = RecordingSessionManager()
         server.pluginManager.registerEvents(
@@ -135,6 +149,7 @@ class OyasaiMusic : JavaPlugin() {
                 audioDirectory = audioDirectory,
                 defaultRecordMaterial = config.getString("recording.default-record-material", "MUSIC_DISC_13") ?: "MUSIC_DISC_13",
                 defaultPrice = config.getInt("recording.default-price", 1000),
+                menuManager = menuManager, // GUIフェーズで追加: 録音完了後に楽曲設定画面を自動で開く
             )
             cmd.setExecutor(executor)
             cmd.tabCompleter = executor
@@ -162,14 +177,7 @@ class OyasaiMusic : JavaPlugin() {
             cmd.tabCompleter = executor
         } ?: logger.warning("playtestコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
-        // ============ ここから GUIフェーズで追加 ============
-        controllerStateService = PlayerControllerStateService()
-        rankingCacheService = RankingCacheService(this, rankingRepository)
-        rankingCacheService.start()
-        menuManager = MenuManager(this)
-        server.pluginManager.registerEvents(menuManager, this)
-        server.pluginManager.registerEvents(PhysicalMusicPlayerItem(this, menuManager), this)
-
+        // ============ ここから GUIフェーズで追加（コマンド登録） ============
         getCommand("musicmenu")?.let { cmd ->
             cmd.setExecutor(MusicMenuCommand(this))
         } ?: logger.warning("musicmenuコマンドの登録に失敗しました（plugin.ymlを確認してください）。")

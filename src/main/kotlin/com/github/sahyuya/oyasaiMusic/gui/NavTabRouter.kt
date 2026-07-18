@@ -12,12 +12,34 @@ import org.bukkit.entity.Player
  * [ownTab]がnullの画面（検索結果・作者作品・楽曲設定など、タブに直接紐づかないドリルダウン画面）は
  * 常に通常の遷移として扱う。
  *
- * @return true = ナビゲーションタブのクリックとして処理した（呼び出し元は追加処理不要）
+ * ⑤水色ブロック(ACTION_MODE)タブは、画面遷移ではなく「その画面のアクションモードを切り替える」
+ * 動作のため、呼び出し元画面が自身の[ActionModeCategory]を渡す（無ければnull=この画面では
+ * アクションモードを使わない、として案内メッセージのみ表示する）。
+ *
+ * @return true = ここでナビゲーションタブのクリックとして処理した（呼び出し元は追加処理不要）
  */
 object NavTabRouter {
 
-    fun handle(slot: Int, ownTab: NavTab?, plugin: OyasaiMusic, menuManager: MenuManager, viewer: Player): Boolean {
+    fun handle(
+        slot: Int,
+        ownTab: NavTab?,
+        actionModeCategory: String?,
+        plugin: OyasaiMusic,
+        menuManager: MenuManager,
+        viewer: Player,
+    ): Boolean {
         val tab = NavTab.entries.firstOrNull { it.slot == slot } ?: return false
+
+        if (tab == NavTab.ACTION_MODE) {
+            if (actionModeCategory == null) {
+                viewer.sendMessage("§7この画面ではアクションモードは使用しません。")
+            } else {
+                val next = BedrockActionModeService.cycle(viewer.uniqueId, actionModeCategory)
+                viewer.sendMessage("§bアクションモードを切り替えました: モード${next.displayIndex}")
+                menuManager.refreshCurrent(viewer.uniqueId)
+            }
+            return true
+        }
 
         if (tab == ownTab) {
             menuManager.open(viewer, MainMenuScreen(plugin, menuManager, viewer), rememberAsPrevious = false)
@@ -29,10 +51,7 @@ object NavTabRouter {
             NavTab.SEARCH -> menuManager.open(viewer, SearchMenuScreen(plugin, menuManager, viewer))
             NavTab.ALL_SONGS -> menuManager.open(viewer, MainMenuScreens.allSongs(plugin, menuManager, viewer))
             NavTab.FAVORITES_PLAYLISTS -> menuManager.open(viewer, FavoritesPlaylistsScreen(plugin, menuManager, viewer))
-            NavTab.ACTION_MODE -> {
-                val next = BedrockActionMode.cycle(viewer.uniqueId)
-                viewer.sendMessage("§bアクションモードを切り替えました: ${next.displayIndex}")
-            }
+            NavTab.ACTION_MODE -> Unit // 上で処理済み
         }
         return true
     }

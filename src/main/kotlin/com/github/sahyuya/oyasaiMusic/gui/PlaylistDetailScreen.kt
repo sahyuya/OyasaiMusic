@@ -43,7 +43,7 @@ class PlaylistDetailScreen private constructor(
 ) : BaseGridMenu(viewer, Component.text(playlist?.name ?: "お気に入り")) {
 
     companion object {
-        val SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        val SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
 
         fun forFavorites(plugin: OyasaiMusic, menuManager: MenuManager, viewer: Player) =
             PlaylistDetailScreen(plugin, menuManager, viewer, null)
@@ -79,7 +79,7 @@ class PlaylistDetailScreen private constructor(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "設定順")
+        GuiChrome.render(inventory, null, state, sortLabel = "設定順", viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_DETAIL)
 
         SLOTS.forEachIndexed { index, slot ->
             songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it, index)) }
@@ -120,14 +120,14 @@ class PlaylistDetailScreen private constructor(
             return
         }
 
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, NavTab.FAVORITES_PLAYLISTS, ActionModeCategory.PLAYLIST_DETAIL, plugin, menuManager, viewer)) return
         if (index == -1) return
         val song = songs.getOrNull(index) ?: return
         if (song.id != pendingRemoveSongId) pendingRemoveSongId = null
 
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
         val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = if (isBedrock) BedrockActionMode.get(viewer.uniqueId) else when (event.click) {
+        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, category = ActionModeCategory.PLAYLIST_DETAIL) else when (event.click) {
             ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
             ClickType.RIGHT -> ActionMode.TERTIARY
             ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
@@ -229,7 +229,7 @@ class PlaylistDetailScreen private constructor(
                 )
                 val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
                 state.isPlaying = true
-                state.nowPlayingTitle = song.title
+                state.nowPlayingSong = song
                 viewer.sendMessage("§a再生開始: §f${song.title}")
             })
         })

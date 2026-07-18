@@ -34,6 +34,7 @@ class RecordCommand(
     private val audioDirectory: File,
     private val defaultRecordMaterial: String,
     private val defaultPrice: Int,
+    private val menuManager: com.github.sahyuya.oyasaiMusic.gui.MenuManager
 ) : CommandExecutor, TabCompleter {
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {

@@ -1,8 +1,11 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
+import com.github.sahyuya.oyasaiMusic.audio.PlaybackSession
+import com.github.sahyuya.oyasaiMusic.model.Song
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
+import org.bukkit.entity.Player
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import java.util.UUID
@@ -61,12 +64,15 @@ object ControllerSlots {
 enum class LoopMode { OFF, LIST, SINGLE }
 
 /**
- * 全画面共通のコントローラー表示状態（再生中情報・ループ・シャッフル）。
- * 現時点ではGUI側の表示状態のみを保持しており、[com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine]の
- * 実セッションとの自動同期（再生終了時に自動でisPlaying=falseにする等）は今後の接続作業が必要。
+ * 全画面共通のコントローラー状態（再生中情報・ループ・シャッフル）。
+ * [nowPlayingSong] / [activeSession] は実際に鳴っている楽曲・再生セッションそのものを保持し、
+ * 下段コントローラーの表示・一時停止/再開・「再生中の曲の詳細を開く」操作の基点になる
+ * （[com.github.sahyuya.oyasaiMusic.gui.PlaybackController] が一元的に更新する。
+ * 各画面から直接この状態を書き換えないこと＝更新後の再描画漏れが不具合の温床になっていたため）。
  */
 data class PlayerControllerState(
-    var nowPlayingTitle: String? = null,
+    var nowPlayingSong: Song? = null,
+    var activeSession: PlaybackSession? = null,
     var isPlaying: Boolean = false,
     var loopMode: LoopMode = LoopMode.OFF,
     var shuffle: Boolean = false,
@@ -82,18 +88,25 @@ class PlayerControllerStateService {
  * 左列ナビゲーションと下段メディアコントローラーを描画する共通処理（UI/UX設計書 1〜3章）。
  * 各画面は必ずこれを呼び出してから、コンテンツ領域([ContentGrid.SLOTS])を自分で描画すること。
  *
- * アイコンのマテリアルは設計書の文言と参照画像から採用した現時点の想定であり、
- * 見た目の微調整（マテリアル差し替え）はここ一箇所を直せば全画面に反映される
- * （採用根拠は実装者からの質問事項として別途まとめている）。
+ * @param viewer 表示対象のプレイヤー（⑤アクションモードタブの現在状態表示に使用）
+ * @param actionModeCategory この画面のアクションモードカテゴリ（[ActionModeCategory]参照）。
+ *        nullの場合はアクションモードを使わない画面として、タブに現在値を表示しない。
  */
 object GuiChrome {
 
-    fun render(inventory: Inventory, activeTab: NavTab?, controllerState: PlayerControllerState, sortLabel: String) {
-        renderNav(inventory, activeTab)
+    fun render(
+        inventory: Inventory,
+        activeTab: NavTab?,
+        controllerState: PlayerControllerState,
+        sortLabel: String,
+        viewer: Player,
+        actionModeCategory: String? = null,
+    ) {
+        renderNav(inventory, activeTab, viewer, actionModeCategory)
         renderController(inventory, controllerState, sortLabel)
     }
 
-    private fun renderNav(inventory: Inventory, activeTab: NavTab?) {
+    private fun renderNav(inventory: Inventory, activeTab: NavTab?, viewer: Player, actionModeCategory: String?) {
         inventory.setItem(NavTab.MY_SONGS.slot, navItem(Material.PLAYER_HEAD, "自作楽曲一覧", NavTab.MY_SONGS == activeTab))
         inventory.setItem(NavTab.SEARCH.slot, navItem(Material.RED_CONCRETE, "検索", NavTab.SEARCH == activeTab))
         inventory.setItem(NavTab.ALL_SONGS.slot, navItem(Material.YELLOW_CONCRETE, "全楽曲一覧", NavTab.ALL_SONGS == activeTab))
@@ -101,7 +114,25 @@ object GuiChrome {
             NavTab.FAVORITES_PLAYLISTS.slot,
             navItem(Material.LIME_CONCRETE, "お気に入り♪プレイリスト", NavTab.FAVORITES_PLAYLISTS == activeTab),
         )
-        inventory.setItem(NavTab.ACTION_MODE.slot, navItem(Material.CYAN_CONCRETE, "アクションモード切替", NavTab.ACTION_MODE == activeTab))
+
+        // ⑤アクションモードタブ: サヒュヤ氏の指示「左タブのアクションモードの切り替え状況」表示に対応。
+        val actionModeLore = if (actionModeCategory != null) {
+            val current = BedrockActionModeService.get(viewer.uniqueId, actionModeCategory)
+            listOf(
+                Component.text("現在: モード${current.displayIndex}", NamedTextColor.AQUA),
+                Component.text("クリックで切替", NamedTextColor.DARK_GRAY),
+            )
+        } else {
+            listOf(Component.text("この画面では未使用", NamedTextColor.DARK_GRAY))
+        }
+        inventory.setItem(
+            NavTab.ACTION_MODE.slot,
+            GuiItemBuilder(Material.CYAN_CONCRETE)
+                .name(Component.text("アクションモード切替", if (NavTab.ACTION_MODE == activeTab) NamedTextColor.YELLOW else NamedTextColor.WHITE))
+                .lore(actionModeLore)
+                .glint(NavTab.ACTION_MODE == activeTab)
+                .build(),
+        )
     }
 
     private fun navItem(material: Material, label: String, active: Boolean): ItemStack =
@@ -126,8 +157,8 @@ object GuiChrome {
 
         inventory.setItem(
             ControllerSlots.NOW_PLAYING,
-            GuiItemBuilder(Material.MUSIC_DISC_13)
-                .name(Component.text(state.nowPlayingTitle ?: "再生中の曲はありません", NamedTextColor.AQUA))
+            GuiItemBuilder(state.nowPlayingSong?.let { Material.matchMaterial(it.recordMaterial) } ?: Material.MUSIC_DISC_13)
+                .name(Component.text(state.nowPlayingSong?.title ?: "再生中の曲はありません", NamedTextColor.AQUA))
                 .lore(Component.text("クリックで詳細を開く", NamedTextColor.GRAY))
                 .glint(state.isPlaying)
                 .build(),
@@ -136,6 +167,10 @@ object GuiChrome {
             ControllerSlots.PLAY_PAUSE,
             GuiItemBuilder(Material.JUKEBOX)
                 .name(Component.text(if (state.isPlaying) "一時停止" else "再生", NamedTextColor.GOLD))
+                .lore(
+                    if (state.activeSession == null) listOf(Component.text("再生中の曲を選ぶとここから一時停止できます", NamedTextColor.DARK_GRAY))
+                    else emptyList(),
+                )
                 .glint(state.isPlaying)
                 .build(),
         )

@@ -55,10 +55,12 @@ class MainMenuScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-")
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
         renderRankingRow()
         ContentGrid.fillBorderIfEmpty(inventory, Material.WHITE_STAINED_GLASS_PANE)
     }
+
+    override fun refresh() = render()
 
     private fun renderRankingRow() {
         for (column in RankingColumn.entries) {
@@ -156,14 +158,13 @@ class MainMenuScreen(
             cycleMetric(column)
             return
         }
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
         when (slot) {
             claimSlot -> claimRewards()
             adminEntrySlot -> if (viewer.hasPermission("oyasaimusic.admin")) {
                 viewer.sendMessage("§e審査・履歴管理GUIは近日実装予定です。")
             }
-            ControllerSlots.LOOP -> toggleLoop()
-            ControllerSlots.SHUFFLE -> toggleShuffle()
         }
     }
 
@@ -186,21 +187,5 @@ class MainMenuScreen(
                 }
             })
         })
-    }
-
-    private fun toggleLoop() {
-        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        state.loopMode = when (state.loopMode) {
-            LoopMode.OFF -> LoopMode.LIST
-            LoopMode.LIST -> LoopMode.SINGLE
-            LoopMode.SINGLE -> LoopMode.OFF
-        }
-        render()
-    }
-
-    private fun toggleShuffle() {
-        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        state.shuffle = !state.shuffle
-        render()
     }
 }

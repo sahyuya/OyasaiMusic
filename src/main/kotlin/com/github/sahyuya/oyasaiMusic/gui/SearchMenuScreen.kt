@@ -24,16 +24,18 @@ class SearchMenuScreen(
     viewer: Player,
 ) : BaseGridMenu(viewer, Component.text("検索")) {
 
-    private val titleSearchSlot = 20
-    private val authorSearchSlot = 21
-    private val onlineAuthorsSlot = 22
-    private val followingAuthorsSlot = 23
+    private val titleSearchSlot = 21
+    private val authorSearchSlot = 22
+    private val onlineAuthorsSlot = 23
+    private val followingAuthorsSlot = 24
 
     init { render() }
 
+    override fun refresh() = render()
+
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, NavTab.SEARCH, state, sortLabel = "-")
+        GuiChrome.render(inventory, NavTab.SEARCH, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
 
         inventory.setItem(titleSearchSlot, GuiItemBuilder(Material.OAK_SIGN).name(Component.text("題名検索", NamedTextColor.YELLOW)).build())
         inventory.setItem(authorSearchSlot, GuiItemBuilder(Material.LECTERN).name(Component.text("作者検索", NamedTextColor.YELLOW)).build())
@@ -45,7 +47,8 @@ class SearchMenuScreen(
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (NavTabRouter.handle(slot, NavTab.SEARCH, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, NavTab.SEARCH, null, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
         when (slot) {
             titleSearchSlot -> openTitleSearch()
             authorSearchSlot -> openAuthorSearch()
@@ -64,7 +67,11 @@ class SearchMenuScreen(
                         title = "題名検索: $text",
                         availableSorts = listOf(SongSort.CREATED_AT_DESC, SongSort.TITLE_ASC),
                         initialSort = SongSort.CREATED_AT_DESC,
-                    ) { sort, limit, offset -> plugin.songRepository.searchPublished(titleLike = text, sort = sort, limit = limit, offset = offset) },
+                    ) { sort, limit, offset ->
+                        MainMenuScreens.mergeOwnDrafts(plugin, viewer, offset, limit, titleFilter = text) { o, l ->
+                            plugin.songRepository.searchPublished(titleLike = text, sort = sort, limit = l, offset = o)
+                        }
+                    },
                     false,
                 )
             })

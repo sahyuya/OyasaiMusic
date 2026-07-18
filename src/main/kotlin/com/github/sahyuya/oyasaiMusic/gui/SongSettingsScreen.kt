@@ -69,11 +69,13 @@ class SongSettingsScreen(
         render()
     }
 
+    override fun refresh() = render()
+
     private fun hasAccess(): Boolean = song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin")
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-")
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
 
         if (!hasAccess()) {
             inventory.setItem(
@@ -163,7 +165,8 @@ class SongSettingsScreen(
         }
         val slot = event.rawSlot
         if (slot != deleteSlot) pendingDeleteConfirm = false
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
 
         when (slot) {
             backSlot -> menuManager.openPrevious(viewer)

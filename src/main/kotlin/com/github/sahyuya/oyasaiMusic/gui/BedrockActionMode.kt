@@ -22,22 +22,34 @@ enum class ActionMode(val displayIndex: Int) {
 }
 
 /**
- * プレイヤーごとの現在のアクションモードを保持する（インメモリ、再起動で初期化）。
+ * 画面カテゴリの一覧（サヒュヤ氏の指示: 「アクションモードの1,2,3,4選択状況は全画面共通ではなく、
+ * 各画面によって個々に一時保存」に対応するためのキー）。
+ * 新しい種類の一覧画面を追加する場合はここに定数を追加すること。
+ */
+object ActionModeCategory {
+    const val SONG_LIST = "song_list"                 // 全楽曲一覧・自作楽曲一覧・検索結果・作者作品
+    const val PLAYLIST_LIST = "playlist_list"          // お気に入り♪プレイリスト一覧
+    const val PLAYLIST_DETAIL = "playlist_detail"      // プレイリスト/お気に入りの登録曲一覧
+}
+
+/**
+ * プレイヤーごと・画面カテゴリごとの現在のアクションモードを保持する
+ * （インメモリ、再起動で初期化。要望通り全画面共通ではなくカテゴリ単位で独立させている）。
  * Java版プレイヤーはこの状態を使わず、通常のクリック種別をそのまま使う
  * （[com.github.sahyuya.oyasaiMusic.util.BedrockUtil.isBedrock] で判定）。
  */
-object BedrockActionMode {
-    private val modes = ConcurrentHashMap<UUID, ActionMode>()
+object BedrockActionModeService {
+    private val modes = ConcurrentHashMap<Pair<UUID, String>, ActionMode>()
 
-    fun get(playerUuid: UUID): ActionMode = modes.getOrDefault(playerUuid, ActionMode.PRIMARY)
+    fun get(playerUuid: UUID, category: String): ActionMode = modes.getOrDefault(playerUuid to category, ActionMode.PRIMARY)
 
-    fun cycle(playerUuid: UUID): ActionMode {
-        val next = get(playerUuid).next()
-        modes[playerUuid] = next
+    fun cycle(playerUuid: UUID, category: String): ActionMode {
+        val next = get(playerUuid, category).next()
+        modes[playerUuid to category] = next
         return next
     }
 
     fun reset(playerUuid: UUID) {
-        modes.remove(playerUuid)
+        modes.keys.removeIf { it.first == playerUuid }
     }
 }

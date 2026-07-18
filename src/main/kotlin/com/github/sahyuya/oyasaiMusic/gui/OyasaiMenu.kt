@@ -37,6 +37,13 @@ interface OyasaiMenu {
 
     /** GUIを閉じた時点の処理（片付け等）。既定では何もしない。 */
     fun onClose(event: InventoryCloseEvent) {}
+
+    /**
+     * 現在の状態に基づき画面を再描画する（[MenuManager.refreshCurrent] から呼ばれる）。
+     * 再生中/一時停止状態の変化等、非同期処理の完了を受けて表示を更新する必要がある画面は
+     * 必ずこれをオーバーライドして自身のrender()相当を呼ぶこと。既定では何もしない。
+     */
+    fun refresh() {}
 }
 
 /**

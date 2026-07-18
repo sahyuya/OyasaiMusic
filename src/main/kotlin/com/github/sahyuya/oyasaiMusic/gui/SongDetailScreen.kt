@@ -69,7 +69,7 @@ class SongDetailScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-")
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
 
         inventory.setItem(previewSlot, previewItem())
         inventory.setItem(authorHeadSlot, authorHeadItem())
@@ -144,7 +144,7 @@ class SongDetailScreen(
             menuManager.openPrevious(viewer)
             return
         }
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
 
         when (slot) {
             previewSlot -> playSong()
@@ -179,7 +179,7 @@ class SongDetailScreen(
                 )
                 val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
                 state.isPlaying = true
-                state.nowPlayingTitle = song.title
+                state.nowPlayingSong = song
                 viewer.sendMessage("§a再生開始: §f${song.title}")
             })
         })

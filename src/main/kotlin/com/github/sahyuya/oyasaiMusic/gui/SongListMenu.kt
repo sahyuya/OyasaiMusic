@@ -1,7 +1,6 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
-import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.db.SongSort
 import com.github.sahyuya.oyasaiMusic.model.Song
 import com.github.sahyuya.oyasaiMusic.util.BedrockUtil
@@ -13,7 +12,6 @@ import org.bukkit.NamespacedKey
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.ClickType
 import org.bukkit.event.inventory.InventoryClickEvent
-import java.io.File
 
 private val SONG_ID_KEY = NamespacedKey("oyasaimusic", "song_id")
 
@@ -22,14 +20,13 @@ private val SONG_ID_KEY = NamespacedKey("oyasaimusic", "song_id")
  * 「③黄色ブロック(全楽曲一覧)」「①自作楽曲一覧」「作者検索の作品一覧」「題名検索結果」等、
  * 複数の画面で共通利用する汎用リスト実装。実際のデータ取得は[loader]に委譲する。
  *
- * 【実装上の解釈（要確認）】
- * 参照画像で一貫してコンテンツ領域の先頭行(row0, slot1〜8)が空欄だったため、
- * 本実装ではその1行を予備領域として空け、残り4行×8列=32件/ページで一覧を表示している。
- *
  * クリック動作はUI/UX設計書 5章「楽曲一覧、検索結果」の行に準拠:
- *   左クリック=再生 / Shift+左クリック=詳細を開く(※楽曲詳細画面は未実装のため暫定メッセージ) /
- *   右クリック=いいね / Shift+右クリック=お気に入り追加(※プレイリスト選択は未実装)
- * 統合版プレイヤーは[BedrockActionModeService]で選択中のモードを同じ4種にマッピングする。
+ *   左クリック=再生 / Shift+左クリック=詳細を開く / 右クリック=いいね / Shift+右クリック=お気に入り追加
+ * 統合版プレイヤーは[ActionModeCategory.SONG_LIST]カテゴリで選択中のモードを同じ4種にマッピングする
+ * （サヒュヤ氏の指示によりアクションモードは画面カテゴリごとに独立して記憶する）。
+ *
+ * 再生は[PlaybackController]に一本化している（各画面が個別にPlaybackEngineを呼ぶと、
+ * 再生状態の再描画漏れ等の不具合の温床になっていたため）。
  */
 class SongListMenu(
     private val plugin: OyasaiMusic,
@@ -46,8 +43,8 @@ class SongListMenu(
 ) : BaseGridMenu(viewer, Component.text(title)) {
 
     companion object {
-        const val PAGE_SIZE = 32
-        val LIST_SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        const val PAGE_SIZE = 40
+        val LIST_SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
     }
 
     private var sortIndex = availableSorts.indexOf(initialSort).coerceAtLeast(0)
@@ -57,6 +54,8 @@ class SongListMenu(
     init {
         reload()
     }
+
+    override fun refresh() = reload()
 
     private fun currentSort(): SongSort = availableSorts[sortIndex]
 
@@ -72,22 +71,37 @@ class SongListMenu(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, ownTab, state, sortLabel = sortDisplayName(currentSort()))
+        GuiChrome.render(inventory, ownTab, state, sortLabel = sortDisplayName(currentSort()), viewer = viewer, actionModeCategory = ActionModeCategory.SONG_LIST)
 
         LIST_SLOTS.forEachIndexed { index, slot ->
             inventory.setItem(slot, pageSongs.getOrNull(index)?.let(::songIcon))
         }
     }
 
-    private fun songIcon(song: Song) = GuiItemBuilder(materialFor(song.recordMaterial))
-        .name(Component.text(song.title, NamedTextColor.WHITE))
-        .lore(
-            Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
-            Component.text("左クリック:再生 Shift+左:詳細", NamedTextColor.DARK_GRAY),
-            Component.text("右クリック:いいね Shift+右:お気に入り", NamedTextColor.DARK_GRAY),
-        )
-        .tag(SONG_ID_KEY, (song.id ?: -1).toString())
-        .build()
+    private fun songIcon(song: Song): org.bukkit.inventory.ItemStack {
+        val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
+
+        // UI/UX設計書8章「未公開（下書き）状態: …「レコードの破片」として…」に対応。
+        // 公開済みでない楽曲(自分の作成中の楽曲)は、実際のレコード種類ではなく
+        // レコードの欠片(DISC_FRAGMENT_5)で視覚的に区別する（サヒュヤ氏の指示で追加）。
+        if (!song.published) {
+            val lore = mutableListOf<Component>(Component.text("非公開（自分だけに表示）", NamedTextColor.DARK_GRAY))
+            lore.addAll(ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-"))
+            return GuiItemBuilder(Material.DISC_FRAGMENT_5)
+                .name(Component.text("[下書き] ${song.title}", NamedTextColor.GRAY))
+                .lore(lore)
+                .tag(SONG_ID_KEY, (song.id ?: -1).toString())
+                .build()
+        }
+
+        val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
+        lore.addAll(ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "再生", "詳細", "いいね", "お気に入り追加"))
+        return GuiItemBuilder(materialFor(song.recordMaterial))
+            .name(Component.text(song.title, NamedTextColor.WHITE))
+            .lore(lore)
+            .tag(SONG_ID_KEY, (song.id ?: -1).toString())
+            .build()
+    }
 
     private fun materialFor(recordMaterial: String): Material = Material.matchMaterial(recordMaterial) ?: Material.MUSIC_DISC_13
 
@@ -101,7 +115,8 @@ class SongListMenu(
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (NavTabRouter.handle(slot, ownTab, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, ownTab, ActionModeCategory.SONG_LIST, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
         when (slot) {
             ControllerSlots.SORT -> {
                 sortIndex = (sortIndex + 1) % availableSorts.size
@@ -110,11 +125,6 @@ class SongListMenu(
             }
             ControllerSlots.PAGE_PREV -> if (page > 0) { page--; reload() }
             ControllerSlots.PAGE_NEXT -> if (pageSongs.size == PAGE_SIZE) { page++; reload() }
-            ControllerSlots.NOW_PLAYING -> {} // TODO: 楽曲詳細画面の実装後、再生中の曲の詳細へ遷移させる
-            ControllerSlots.PLAY_PAUSE, ControllerSlots.PREV_SONG, ControllerSlots.NEXT_SONG ->
-                viewer.sendMessage("§7この操作は現在プレイリスト連携の実装待ちです。")
-            ControllerSlots.LOOP -> toggleLoop()
-            ControllerSlots.SHUFFLE -> toggleShuffle()
             else -> if (slot in LIST_SLOTS) handleSongClick(event, slot)
         }
     }
@@ -126,49 +136,28 @@ class SongListMenu(
         val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
         val action = resolveAction(event, isBedrock)
         when (action) {
-            ActionMode.PRIMARY -> playSong(song)
-            ActionMode.SECONDARY -> menuManager.open(viewer, SongDetailScreen(plugin, menuManager, viewer, song))
+            ActionMode.PRIMARY -> plugin.playbackController.play(viewer, song)
+            ActionMode.SECONDARY -> {
+                // 下書き楽曲は「詳細」ではなく直接「設定」を開く方が実用的なため分岐する。
+                if (!song.published && (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin"))) {
+                    menuManager.open(viewer, SongSettingsScreen(plugin, menuManager, viewer, song))
+                } else {
+                    menuManager.open(viewer, SongDetailScreen(plugin, menuManager, viewer, song))
+                }
+            }
             ActionMode.TERTIARY -> likeSong(song)
             ActionMode.QUATERNARY -> favoriteSong(song)
         }
     }
 
     private fun resolveAction(event: InventoryClickEvent, isBedrock: Boolean): ActionMode {
-        if (isBedrock) return BedrockActionMode.get(viewer.uniqueId)
+        if (isBedrock) return BedrockActionModeService.get(viewer.uniqueId, ActionModeCategory.SONG_LIST)
         return when (event.click) {
             ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
             ClickType.RIGHT -> ActionMode.TERTIARY
             ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
             else -> ActionMode.PRIMARY
         }
-    }
-
-    private fun playSong(song: Song) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-            val file = File(plugin.audioDirectory, song.fileName)
-            if (!file.exists()) {
-                Bukkit.getScheduler().runTask(plugin, Runnable { viewer.sendMessage("§c音源ファイルが見つかりません。") })
-                return@Runnable
-            }
-            val audio = SongAudioFile.read(file)
-            Bukkit.getScheduler().runTask(plugin, Runnable {
-                val mode = plugin.playbackModeService.resolve(viewer.uniqueId, song)
-                plugin.playbackEngine.play(
-                    song = song,
-                    notes = audio.notes,
-                    recipients = listOf(viewer),
-                    mode = mode,
-                    onListenThresholdReached = { player, s ->
-                        plugin.viewCountService.registerView(player, s, isAmbientPlayback = false) },
-                    onCompletion = { plugin.controllerStateService.stateFor(viewer.uniqueId).isPlaying = false },
-                )
-                val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                state.isPlaying = true
-                state.nowPlayingTitle = song.title
-                render()
-                viewer.sendMessage("§a再生開始: §f${song.title}")
-            })
-        })
     }
 
     private fun likeSong(song: Song) {
@@ -183,21 +172,5 @@ class SongListMenu(
 
     private fun favoriteSong(song: Song) {
         menuManager.open(viewer, PlaylistSelectionScreen(plugin, menuManager, viewer, song))
-    }
-
-    private fun toggleLoop() {
-        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        state.loopMode = when (state.loopMode) {
-            LoopMode.OFF -> LoopMode.LIST
-            LoopMode.LIST -> LoopMode.SINGLE
-            LoopMode.SINGLE -> LoopMode.OFF
-        }
-        render()
-    }
-
-    private fun toggleShuffle() {
-        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        state.shuffle = !state.shuffle
-        render()
     }
 }

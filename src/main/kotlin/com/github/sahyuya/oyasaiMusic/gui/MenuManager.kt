@@ -1,6 +1,5 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
-import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
@@ -8,6 +7,7 @@ import org.bukkit.event.Listener
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.event.inventory.InventoryDragEvent
+import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.plugin.Plugin
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -20,15 +20,22 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * UI/UX設計書 9章:「携帯用プレイヤー」右クリックで前回開いていたGUIを復元するため、
  * [lastKnown] はGUIを閉じても消さずに保持し続ける（[current] は開いている間だけ）。
+ *
+ * 【不具合修正】「戻る」ボタンが効かない件について:
+ * 当初は `InventoryCloseEvent` のたびに [current]/[previous] を破棄していたが、
+ * `AnvilTextInputSession` や `BookQuillUrlInput` はMenuManagerを介さず直接
+ * `player.openInventory(...)` を呼ぶため、その際にも（元のGUIが暗黙的に閉じられることで）
+ * `InventoryCloseEvent` が発生してしまい、金床/本入力を1回使っただけで履歴が消えて
+ * 「戻る」が効かなくなっていた。この根本原因への対応として、GUIを閉じた程度では
+ * [current]/[previous] を破棄しないようにし、次に [open] が呼ばれた時点で自然に
+ * 上書きされる設計に変更した。メモリ上の掃除は、プレイヤーが実際にサーバーを
+ * 離れたとき([onPlayerQuit])にのみ行う。
  */
 class MenuManager(private val plugin: Plugin) : Listener {
 
     private val current = ConcurrentHashMap<UUID, OyasaiMenu>()
     private val previous = ConcurrentHashMap<UUID, OyasaiMenu>()
     private val lastKnown = ConcurrentHashMap<UUID, OyasaiMenu>()
-
-    /** open()内部で画面切り替え中に発火するInventoryCloseEventを無視するためのフラグ。 */
-    private val switching = ConcurrentHashMap.newKeySet<UUID>()
 
     /**
      * @param rememberAsPrevious trueの場合、直前に開いていた画面を「戻る」用に記憶する。
@@ -41,9 +48,7 @@ class MenuManager(private val plugin: Plugin) : Listener {
         }
         current[player.uniqueId] = menu
         lastKnown[player.uniqueId] = menu
-        switching.add(player.uniqueId)
         player.openInventory(menu.inventory)
-        Bukkit.getScheduler().runTask(plugin, Runnable { switching.remove(player.uniqueId) })
     }
 
     /** UI/UX設計書1章の「戻る」ボタン用。記憶している1階層前の画面が無ければ何もしない。 */
@@ -57,9 +62,13 @@ class MenuManager(private val plugin: Plugin) : Listener {
 
     fun currentMenu(playerUuid: UUID): OyasaiMenu? = current[playerUuid]
 
-    private fun closeTracking(playerUuid: UUID) {
-        current.remove(playerUuid)
-        previous.remove(playerUuid)
+    /**
+     * 現在開いている画面を再描画する（例: 再生中/一時停止状態が変わった、いいねやフォローの
+     * 結果が確定した等、非同期処理の完了を受けて表示を更新したい場合に呼ぶ）。
+     * プレイヤーがGUIを閉じている場合は何もしない。
+     */
+    fun refreshCurrent(playerUuid: UUID) {
+        current[playerUuid]?.refresh()
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -80,8 +89,15 @@ class MenuManager(private val plugin: Plugin) : Listener {
     fun onClose(event: InventoryCloseEvent) {
         val holder = event.inventory.holder as? OyasaiMenuHolder ?: return
         val player = event.player as? Player ?: return
-        if (switching.contains(player.uniqueId)) return // 画面遷移による一時的なcloseは無視
         holder.menu.onClose(event)
-        closeTracking(player.uniqueId)
+        // NOTE: ここでは current/previous を破棄しない（上記クラスコメント参照）。
+    }
+
+    @EventHandler
+    fun onPlayerQuit(event: PlayerQuitEvent) {
+        val uuid = event.player.uniqueId
+        current.remove(uuid)
+        previous.remove(uuid)
+        lastKnown.remove(uuid)
     }
 }

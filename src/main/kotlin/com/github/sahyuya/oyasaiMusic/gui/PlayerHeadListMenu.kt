@@ -27,19 +27,21 @@ class PlayerHeadListMenu(
 ) : BaseGridMenu(viewer, Component.text(title)) {
 
     companion object {
-        const val PAGE_SIZE = 32
-        val SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        const val PAGE_SIZE = 40
+        val SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
     }
 
     private var page = 0
 
     init { render() }
 
+    override fun refresh() = render()
+
     private fun currentPageUuids(): List<UUID> = uuids.drop(page * PAGE_SIZE).take(PAGE_SIZE)
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-")
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
 
         currentPageUuids().forEachIndexed { index, uuid ->
             val name = Bukkit.getOfflinePlayer(uuid).name ?: uuid.toString().take(8)
@@ -52,7 +54,8 @@ class PlayerHeadListMenu(
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (NavTabRouter.handle(slot, null, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
         when (slot) {
             ControllerSlots.PAGE_PREV -> if (page > 0) { page--; render() }
             ControllerSlots.PAGE_NEXT -> if (uuids.size > (page + 1) * PAGE_SIZE) { page++; render() }

@@ -30,7 +30,7 @@ class FavoritesPlaylistsScreen(
 ) : BaseGridMenu(viewer, Component.text("お気に入り♪プレイリスト")) {
 
     companion object {
-        val SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } } // 32スロット
+        val SLOTS: List<Int> = (1..3).flatMap { row -> (2..7).map { col -> row * 9 + col } } // 32スロット
         private const val FAVORITES_INDEX = 0 // SLOTS[0] は常に「お気に入り」固定
     }
 
@@ -52,7 +52,7 @@ class FavoritesPlaylistsScreen(
 
     private fun render(favoriteCount: Int = -1) {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, NavTab.FAVORITES_PLAYLISTS, state, sortLabel = "-")
+        GuiChrome.render(inventory, NavTab.FAVORITES_PLAYLISTS, state, sortLabel = "-", viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_LIST)
 
         inventory.setItem(SLOTS[FAVORITES_INDEX], favoritesIcon(favoriteCount))
 
@@ -98,7 +98,7 @@ class FavoritesPlaylistsScreen(
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (NavTabRouter.handle(slot, NavTab.FAVORITES_PLAYLISTS, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, NavTab.FAVORITES_PLAYLISTS, actionModeCategory = ActionModeCategory.PLAYLIST_LIST, plugin, menuManager, viewer)) return
 
         val index = SLOTS.indexOf(slot)
         if (index == -1) return
@@ -119,7 +119,7 @@ class FavoritesPlaylistsScreen(
 
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
         val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = if (isBedrock) BedrockActionMode.get(viewer.uniqueId) else when (event.click) {
+        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, category = ActionModeCategory.PLAYLIST_LIST) else when (event.click) {
             ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
             ClickType.RIGHT -> ActionMode.TERTIARY
             ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
