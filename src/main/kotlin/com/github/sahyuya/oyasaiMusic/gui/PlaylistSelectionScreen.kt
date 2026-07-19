@@ -35,6 +35,8 @@ class PlaylistSelectionScreen(
 
     init { reload() }
 
+    override fun refresh() = reload()
+
     private fun reload() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
             val list = plugin.playlistRepository.listByOwner(viewer.uniqueId)
@@ -93,6 +95,7 @@ class PlaylistSelectionScreen(
             return
         }
         if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
 
         val index = SLOTS.indexOf(slot)
         if (index == -1) return

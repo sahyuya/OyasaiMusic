@@ -1,9 +1,8 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
-import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
-import com.github.sahyuya.oyasaiMusic.model.Song
 import com.github.sahyuya.oyasaiMusic.util.HeadTextureUtil
+import com.github.sahyuya.oyasaiMusic.model.Song
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.event.ClickEvent
 import net.kyori.adventure.text.format.NamedTextColor
@@ -11,7 +10,6 @@ import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
-import java.io.File
 
 /**
  * ⑤ 楽曲詳細画面（UI/UX設計書 6章、参照画像5枚目）。
@@ -54,6 +52,8 @@ class SongDetailScreen(
         render()
         loadSocialState()
     }
+
+    override fun refresh() = render()
 
     private fun loadSocialState() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
@@ -145,9 +145,10 @@ class SongDetailScreen(
             return
         }
         if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
 
         when (slot) {
-            previewSlot -> playSong()
+            previewSlot -> plugin.playbackController.play(viewer, song)
             authorHeadSlot -> openAuthorProfile()
             followSlot -> toggleFollow()
             referenceUrlSlot -> outputReferenceUrl()
@@ -157,32 +158,6 @@ class SongDetailScreen(
                 menuManager.open(viewer, SongSettingsScreen(plugin, menuManager, viewer, song))
             }
         }
-    }
-
-    private fun playSong() {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-            val file = File(plugin.audioDirectory, song.fileName)
-            if (!file.exists()) {
-                Bukkit.getScheduler().runTask(plugin, Runnable { viewer.sendMessage("§c音源ファイルが見つかりません。") })
-                return@Runnable
-            }
-            val audio = SongAudioFile.read(file)
-            Bukkit.getScheduler().runTask(plugin, Runnable {
-                val mode = plugin.playbackModeService.resolve(viewer.uniqueId, song)
-                plugin.playbackEngine.play(
-                    song = song,
-                    notes = audio.notes,
-                    recipients = listOf(viewer),
-                    mode = mode,
-                    onListenThresholdReached = { player, s -> plugin.viewCountService.registerView(player, s, isAmbientPlayback = false) },
-                    onCompletion = { plugin.controllerStateService.stateFor(viewer.uniqueId).isPlaying = false },
-                )
-                val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                state.isPlaying = true
-                state.nowPlayingSong = song
-                viewer.sendMessage("§a再生開始: §f${song.title}")
-            })
-        })
     }
 
     private fun openAuthorProfile() {

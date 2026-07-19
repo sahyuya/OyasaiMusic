@@ -86,7 +86,7 @@ class SongListMenu(
         // レコードの欠片(DISC_FRAGMENT_5)で視覚的に区別する（サヒュヤ氏の指示で追加）。
         if (!song.published) {
             val lore = mutableListOf<Component>(Component.text("非公開（自分だけに表示）", NamedTextColor.DARK_GRAY))
-            lore.addAll(ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-"))
+                lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-")
             return GuiItemBuilder(Material.DISC_FRAGMENT_5)
                 .name(Component.text("[下書き] ${song.title}", NamedTextColor.GRAY))
                 .lore(lore)
@@ -95,7 +95,7 @@ class SongListMenu(
         }
 
         val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
-        lore.addAll(ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "再生", "詳細", "いいね", "お気に入り追加"))
+        lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "再生", "詳細", "いいね", "お気に入り追加")
         return GuiItemBuilder(materialFor(song.recordMaterial))
             .name(Component.text(song.title, NamedTextColor.WHITE))
             .lore(lore)

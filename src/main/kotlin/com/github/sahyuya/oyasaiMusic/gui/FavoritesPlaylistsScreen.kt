@@ -20,8 +20,15 @@ import org.bukkit.event.inventory.InventoryClickEvent
  * 背景は緑タブに合わせて[Material.LIME_STAINED_GLASS_PANE]（参照画像の板ガラス装飾）。
  *
  * クリック動作はUI/UX設計書 5章「お気に入り・プレイリスト (リスト画面)」に準拠:
- *   左クリック=詳細を開く＆自動再生 / Shift+左=共有(簡易実装) / 右クリック=名前変更 / Shift+右=削除(要確認)
+ *   左クリック=詳細を開く＆自動再生 / Shift+左=共有 / 右クリック=名前変更 / Shift+右=削除(要確認)
  * 「お気に入り」自体は名前変更・削除ができないため、左クリック以外は無効化する。
+ *
+ * 【不具合修正】プレイリスト名の変更後にGUIへ戻らず閉じてしまう件について:
+ * `AnvilTextInputSession` はMenuManagerを介さず直接GUIを閉じるため、その完了コールバック内で
+ * 単に画面の中身を再描画([render])するだけでは、既に閉じられてしまったGUIを
+ * プレイヤーへ再表示することにはならない。[reload] の最後で必ず
+ * `menuManager.open(viewer, this, false)` を呼び、Anvil入力を経由したかどうかに関わらず
+ * 確実にGUIが表示された状態に戻るようにしている。
  */
 class FavoritesPlaylistsScreen(
     private val plugin: OyasaiMusic,
@@ -30,7 +37,7 @@ class FavoritesPlaylistsScreen(
 ) : BaseGridMenu(viewer, Component.text("お気に入り♪プレイリスト")) {
 
     companion object {
-        val SLOTS: List<Int> = (1..3).flatMap { row -> (2..7).map { col -> row * 9 + col } } // 32スロット
+        val SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } } // 32スロット
         private const val FAVORITES_INDEX = 0 // SLOTS[0] は常に「お気に入り」固定
     }
 
@@ -39,6 +46,8 @@ class FavoritesPlaylistsScreen(
 
     init { reload() }
 
+    override fun refresh() = reload()
+
     private fun reload() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
             val list = plugin.playlistRepository.listByOwner(viewer.uniqueId)
@@ -46,13 +55,18 @@ class FavoritesPlaylistsScreen(
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 playlists = list
                 render(favoriteCount)
+                // Anvil入力等を経由してGUIが一旦閉じられていた場合でも確実に再表示する。
+                menuManager.open(viewer, this, rememberAsPrevious = false)
             })
         })
     }
 
     private fun render(favoriteCount: Int = -1) {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, NavTab.FAVORITES_PLAYLISTS, state, sortLabel = "-", viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_LIST)
+        GuiChrome.render(
+            inventory, NavTab.FAVORITES_PLAYLISTS, state, sortLabel = "-",
+            viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_LIST,
+        )
 
         inventory.setItem(SLOTS[FAVORITES_INDEX], favoritesIcon(favoriteCount))
 
@@ -84,21 +98,22 @@ class FavoritesPlaylistsScreen(
 
     private fun playlistIcon(playlist: Playlist): org.bukkit.inventory.ItemStack {
         val confirming = pendingDeletePlaylistId == playlist.id
+        val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
+        val lore = mutableListOf<Component>(Component.text("${playlist.songCount} 曲", NamedTextColor.GRAY))
+        lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.PLAYLIST_LIST, "開く", "共有", "名前変更", "削除")
+        if (confirming) lore += Component.text("もう一度Shift+右クリックで削除確定", NamedTextColor.RED)
+
         return GuiItemBuilder(Material.CHISELED_BOOKSHELF)
             .name(Component.text(playlist.name, NamedTextColor.YELLOW))
-            .lore(
-                Component.text("${playlist.songCount} 曲", NamedTextColor.GRAY),
-                Component.text("左:開く Shift+左:共有", NamedTextColor.DARK_GRAY),
-                Component.text("右:名前変更 Shift+右:削除", NamedTextColor.DARK_GRAY),
-                *(if (confirming) arrayOf(Component.text("もう一度Shift+右クリックで削除確定", NamedTextColor.RED)) else emptyArray()),
-            )
+            .lore(lore)
             .glint(confirming)
             .build()
     }
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (NavTabRouter.handle(slot, NavTab.FAVORITES_PLAYLISTS, actionModeCategory = ActionModeCategory.PLAYLIST_LIST, plugin, menuManager, viewer)) return
+        if (NavTabRouter.handle(slot, NavTab.FAVORITES_PLAYLISTS, ActionModeCategory.PLAYLIST_LIST, plugin, menuManager, viewer)) return
+        if (plugin.playbackController.handleControllerClick(slot, viewer)) return
 
         val index = SLOTS.indexOf(slot)
         if (index == -1) return
@@ -119,7 +134,7 @@ class FavoritesPlaylistsScreen(
 
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
         val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, category = ActionModeCategory.PLAYLIST_LIST) else when (event.click) {
+        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, ActionModeCategory.PLAYLIST_LIST) else when (event.click) {
             ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
             ClickType.RIGHT -> ActionMode.TERTIARY
             ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
@@ -175,8 +190,9 @@ class FavoritesPlaylistsScreen(
 
     /**
      * 「共有」: 指定したオンラインプレイヤーへ、この曲順のままコピーしたプレイリストを
-     * 新規作成する形で送る（サヒュヤ氏の指示）。共有先はオンラインプレイヤーに限定する
+     * 新規作成する形で送る。共有先はオンラインプレイヤーに限定する
      * （オフラインだと即座に通知できずUUID解決の確実性も下がるため）。
+     * 失敗パス（プレイヤーが見つからない等）も含め、必ず [reload] でGUIを再表示すること。
      */
     private fun sharePlaylist(playlist: Playlist) {
         AnvilTextInput.open(plugin, viewer, Component.text("共有先のプレイヤー名")) { targetName ->
@@ -184,10 +200,12 @@ class FavoritesPlaylistsScreen(
                 val target = Bukkit.getPlayerExact(targetName)
                 if (target == null) {
                     viewer.sendMessage("§cオンラインのプレイヤーが見つかりません: $targetName")
+                    reload()
                     return@Runnable
                 }
                 if (target.uniqueId == viewer.uniqueId) {
                     viewer.sendMessage("§c自分自身には共有できません。")
+                    reload()
                     return@Runnable
                 }
                 Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
@@ -197,6 +215,7 @@ class FavoritesPlaylistsScreen(
                     Bukkit.getScheduler().runTask(plugin, Runnable {
                         viewer.sendMessage("§a${target.name} にプレイリスト「${playlist.name}」(${songs.size}曲)を共有しました。")
                         target.sendMessage("§d${viewer.name} からプレイリスト「${playlist.name}」が共有されました！ §7(お気に入り♪プレイリストに追加されました)")
+                        reload()
                     })
                 })
             })

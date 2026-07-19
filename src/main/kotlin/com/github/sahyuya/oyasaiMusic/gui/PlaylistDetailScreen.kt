@@ -1,7 +1,6 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
-import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.model.Playlist
 import com.github.sahyuya.oyasaiMusic.model.Song
 import com.github.sahyuya.oyasaiMusic.util.BedrockUtil
@@ -12,12 +11,13 @@ import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.ClickType
 import org.bukkit.event.inventory.InventoryClickEvent
-import java.io.File
 
 /**
  * お気に入り/プレイリストの「登録楽曲一覧」画面（UI/UX設計書 5章・6章）。
  * 「詳細を開いた瞬間にリスト左上の曲を自動再生開始。以降は設定順に順次再生」に対応するため、
- * 画面を開いた時点で先頭曲の再生を開始し、再生完了ごとに次の曲へ自動的に進める。
+ * 画面を開いた時点で先頭曲の再生を開始し、再生完了ごとに次の曲へ自動的に進める
+ * （シャッフルONの場合は次の曲をランダムに選ぶ。下段のシャッフル/ループボタンの状態を見る）。
+ * 再生は[com.github.sahyuya.oyasaiMusic.gui.PlaybackController]に一本化している（他画面と同様の理由）。
  *
  * クリック動作（UI/UX設計書5章「お気に入り・プレイリスト (登録楽曲一覧)」）:
  *   左クリック=再生 / Shift+左=詳細を開く / 右クリック=並び替え(ドラッグ) / Shift+右=リストから除外(要確認)
@@ -44,6 +44,8 @@ class PlaylistDetailScreen private constructor(
 
     companion object {
         val SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        /** 曲間の間隔（サヒュヤ氏の指示: 約1秒。20tick=1000ms）。 */
+        private const val ADVANCE_DELAY_TICKS = 20L
 
         fun forFavorites(plugin: OyasaiMusic, menuManager: MenuManager, viewer: Player) =
             PlaylistDetailScreen(plugin, menuManager, viewer, null)
@@ -57,10 +59,13 @@ class PlaylistDetailScreen private constructor(
     private var autoPlayIndex = 0
     private var draggingSongId: Long? = null
     private var draggingFromIndex: Int? = null
+    private var pendingAdvanceTask: org.bukkit.scheduler.BukkitTask? = null
 
     init {
         reload(autoPlayFirst = true)
     }
+
+    override fun refresh() = reload()
 
     private fun reload(autoPlayFirst: Boolean = false) {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
@@ -72,37 +77,39 @@ class PlaylistDetailScreen private constructor(
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 songs = list
                 render()
-                if (autoPlayFirst && songs.isNotEmpty()) playIndex(0, advanceOnCompletion = true)
+                if (autoPlayFirst && songs.isNotEmpty()) playIndex(0)
             })
         })
     }
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "設定順", viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_DETAIL)
+        GuiChrome.render(
+            inventory, null, state, sortLabel = "設定順",
+            viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_DETAIL,
+        )
 
         SLOTS.forEachIndexed { index, slot ->
-            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it, index)) }
+            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it)) }
         }
     }
 
-    private fun songIcon(song: Song, index: Int): org.bukkit.inventory.ItemStack {
+    private fun songIcon(song: Song): org.bukkit.inventory.ItemStack {
         val confirming = pendingRemoveSongId == song.id
         val dragging = draggingSongId == song.id
-        val extraLore = when {
-            dragging -> arrayOf(Component.text("移動中… 移動先をクリック（再クリックでキャンセル）", NamedTextColor.AQUA))
-            draggingSongId != null -> arrayOf(Component.text("クリックでここに移動", NamedTextColor.AQUA))
-            confirming -> arrayOf(Component.text("もう一度Shift+右クリックで除外確定", NamedTextColor.RED))
-            else -> emptyArray()
+        val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
+
+        val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
+        lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.PLAYLIST_DETAIL, "再生", "詳細を開く", "掴んで移動", "除外")
+        when {
+            dragging -> lore += Component.text("移動中… 移動先をクリック（再クリックでキャンセル）", NamedTextColor.AQUA)
+            draggingSongId != null -> lore += Component.text("クリックでここに移動", NamedTextColor.AQUA)
+            confirming -> lore += Component.text("もう一度Shift+右クリックで除外確定", NamedTextColor.RED)
         }
+
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
             .name(Component.text(song.title, NamedTextColor.WHITE))
-            .lore(
-                Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
-                Component.text("左:再生 Shift+左:詳細", NamedTextColor.DARK_GRAY),
-                Component.text("右:掴んで移動 Shift+右:除外", NamedTextColor.DARK_GRAY),
-                *extraLore,
-            )
+            .lore(lore)
             .glint(confirming || dragging)
             .build()
     }
@@ -120,21 +127,37 @@ class PlaylistDetailScreen private constructor(
             return
         }
 
-        if (NavTabRouter.handle(slot, NavTab.FAVORITES_PLAYLISTS, ActionModeCategory.PLAYLIST_DETAIL, plugin, menuManager, viewer)) return
-        if (index == -1) return
+        if (NavTabRouter.handle(slot, null, ActionModeCategory.PLAYLIST_DETAIL, plugin, menuManager, viewer)) return
+
+        when (slot) {
+            ControllerSlots.PREV_SONG -> {
+                if (songs.isEmpty()) return
+                val prevIndex = (autoPlayIndex - 1).let { if (it < 0) songs.size - 1 else it }
+                playIndex(prevIndex, delayTicks = ADVANCE_DELAY_TICKS)
+            }
+            ControllerSlots.NEXT_SONG -> scheduleAdvance()
+            else -> {
+                if (plugin.playbackController.handleControllerClick(slot, viewer)) return
+                if (index == -1) return
+                handleSongClick(event, index)
+            }
+        }
+    }
+
+    private fun handleSongClick(event: InventoryClickEvent, index: Int) {
         val song = songs.getOrNull(index) ?: return
         if (song.id != pendingRemoveSongId) pendingRemoveSongId = null
 
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
         val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, category = ActionModeCategory.PLAYLIST_DETAIL) else when (event.click) {
+        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, ActionModeCategory.PLAYLIST_DETAIL) else when (event.click) {
             ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
             ClickType.RIGHT -> ActionMode.TERTIARY
             ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
             else -> ActionMode.PRIMARY
         }
         when (action) {
-            ActionMode.PRIMARY -> playIndex(index, advanceOnCompletion = true)
+            ActionMode.PRIMARY -> playIndex(index)
             ActionMode.SECONDARY -> openDetailsOrSettings(song)
             ActionMode.TERTIARY -> beginDrag(song, index)
             ActionMode.QUATERNARY -> confirmOrRemove(song)
@@ -206,45 +229,46 @@ class PlaylistDetailScreen private constructor(
         })
     }
 
-    private fun playIndex(index: Int, advanceOnCompletion: Boolean) {
+    private fun playIndex(index: Int, delayTicks: Long = 0) {
         val song = songs.getOrNull(index) ?: return
         autoPlayIndex = index
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-            val file = File(plugin.audioDirectory, song.fileName)
-            if (!file.exists()) return@Runnable
-            val audio = SongAudioFile.read(file)
-            Bukkit.getScheduler().runTask(plugin, Runnable {
-                val mode = plugin.playbackModeService.resolve(viewer.uniqueId, song)
-                plugin.playbackEngine.play(
-                    song = song,
-                    notes = audio.notes,
-                    recipients = listOf(viewer),
-                    mode = mode,
-                    onListenThresholdReached = { player, s -> plugin.viewCountService.registerView(player, s, isAmbientPlayback = false) },
-                    onCompletion = {
-                        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                        state.isPlaying = false
-                        if (advanceOnCompletion) advanceToNext()
-                    },
-                )
-                val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                state.isPlaying = true
-                state.nowPlayingSong = song
-                viewer.sendMessage("§a再生開始: §f${song.title}")
-            })
-        })
+        pendingAdvanceTask?.cancel()
+        pendingAdvanceTask = null
+        if (delayTicks <= 0) {
+            plugin.playbackController.play(viewer, song, onCompletion = { scheduleAdvance() })
+        } else {
+            pendingAdvanceTask = Bukkit.getScheduler().runTaskLater(
+                plugin,
+                Runnable {
+                    pendingAdvanceTask = null
+                    plugin.playbackController.play(viewer, song, onCompletion = { scheduleAdvance() })
+                },
+                delayTicks,
+            )
+        }
     }
 
-    /** UI/UX設計書6章「以降は設定順に順次再生」への対応。末尾まで再生したらループ設定に従う。 */
-    private fun advanceToNext() {
-        val nextIndex = autoPlayIndex + 1
-        if (nextIndex < songs.size) {
-            playIndex(nextIndex, advanceOnCompletion = true)
-            return
-        }
+    /**
+     * UI/UX設計書6章「以降は設定順に順次再生」への対応。末尾まで再生したらループ設定に従う。
+     * シャッフルONの場合は次の曲をランダムに選ぶ（サヒュヤ氏の指示「シャッフル、ループ機能」対応）。
+     * 曲と曲の間には約1秒の間隔を空ける（サヒュヤ氏の指示）。
+     */
+    private fun scheduleAdvance() {
+        if (songs.isEmpty()) return
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        if (state.loopMode != com.github.sahyuya.oyasaiMusic.gui.LoopMode.OFF && songs.isNotEmpty()) {
-            playIndex(0, advanceOnCompletion = true)
+        val nextIndex = resolveNextIndex(state) ?: return
+        playIndex(nextIndex, delayTicks = ADVANCE_DELAY_TICKS)
+    }
+
+    private fun resolveNextIndex(state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): Int? {
+        if (state.shuffle) {
+            if (songs.size == 1) return if (state.loopMode != LoopMode.OFF) 0 else null
+            var next: Int
+            do { next = songs.indices.random() } while (next == autoPlayIndex)
+            return next
         }
+        val nextIndex = autoPlayIndex + 1
+        if (nextIndex < songs.size) return nextIndex
+        return if (state.loopMode != LoopMode.OFF) 0 else null
     }
 }

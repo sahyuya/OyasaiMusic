@@ -76,12 +76,22 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
         })
     }
 
-    /** 下段「再生/一時停止」ボタン。再生中のセッションが無ければ案内メッセージのみ表示する。 */
+    /**
+     * 下段「再生/一時停止」ボタン。
+     * 再生中のセッションが無くても、直前に再生していた曲([PlayerControllerState.nowPlayingSong])が
+     * 残っていればそれを再生し直す（サヒュヤ氏の指示: 「再生が終了した後、もう一度下段の再生ボタンを
+     * 押したら再生できるように」。次の曲を再生するまでは最後に再生した曲を覚えておく）。
+     */
     fun togglePlayPause(viewer: Player) {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         val session = state.activeSession
         if (session == null) {
-            viewer.sendMessage("§7再生中の曲がありません。曲を選んで再生してください。")
+            val lastSong = state.nowPlayingSong
+            if (lastSong != null) {
+                play(viewer, lastSong)
+            } else {
+                viewer.sendMessage("§7再生中の曲がありません。曲を選んで再生してください。")
+            }
             return
         }
         if (state.isPlaying) {

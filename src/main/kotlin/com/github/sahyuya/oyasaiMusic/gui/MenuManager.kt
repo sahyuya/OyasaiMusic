@@ -33,9 +33,15 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class MenuManager(private val plugin: Plugin) : Listener {
 
+    companion object {
+        /** GUIクリックの連打対策（サヒュヤ氏の指示: 100msのクールタイム）。 */
+        private const val CLICK_COOLDOWN_MS = 100L
+    }
+
     private val current = ConcurrentHashMap<UUID, OyasaiMenu>()
     private val previous = ConcurrentHashMap<UUID, OyasaiMenu>()
     private val lastKnown = ConcurrentHashMap<UUID, OyasaiMenu>()
+    private val lastClickMillis = ConcurrentHashMap<UUID, Long>()
 
     /**
      * @param rememberAsPrevious trueの場合、直前に開いていた画面を「戻る」用に記憶する。
@@ -77,6 +83,13 @@ class MenuManager(private val plugin: Plugin) : Listener {
         // GUI欄・プレイヤーインベントリ側どちらのクリックでも既定では持ち出し不可にする。
         // 画面側が明示的にfalseへ戻さない限りアイテムの移動は起きない。
         event.isCancelled = true
+
+        val player = event.whoClicked as? Player ?: return
+        val now = System.currentTimeMillis()
+        val last = lastClickMillis[player.uniqueId] ?: 0L
+        if (now - last < CLICK_COOLDOWN_MS) return // 連打対策: クールタイム中は無視する
+        lastClickMillis[player.uniqueId] = now
+
         holder.menu.onClick(event)
     }
 
@@ -99,5 +112,6 @@ class MenuManager(private val plugin: Plugin) : Listener {
         current.remove(uuid)
         previous.remove(uuid)
         lastKnown.remove(uuid)
+        lastClickMillis.remove(uuid)
     }
 }
