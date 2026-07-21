@@ -1,6 +1,7 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 import org.bukkit.Bukkit
@@ -46,7 +47,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   - PDCタグでセッション由来のアイテムを識別し、GUIを閉じた1tick後にプレイヤーの
  *     実インベントリ/カーソルへ漏れ出していないか確認して掃除する安全策も追加している。
  */
-object AnvilTextInput : Listener {
+object AnvilTextInputSession : Listener {
 
     private const val OUTPUT_SLOT = 2
 
@@ -87,10 +88,10 @@ object AnvilTextInput : Listener {
             .build(player)
         configure(view)
 
+        // サヒュヤ氏の指示: 初回表示時は未入力(素のPAPER)ではなく「ここに入力」等の案内を表示する。
         val placeholder = ItemStack(itemMaterial)
-        if (initialText.isNotEmpty()) {
-            placeholder.editMeta { it.displayName(Component.text(initialText)) }
-        }
+        val initialDisplayText = initialText.ifEmpty { "ここに入力" }
+        placeholder.editMeta { it.displayName(Component.text(initialDisplayText, NamedTextColor.GRAY)) }
 
         val session = Session(UUID.randomUUID().toString(), plugin, view.topInventory, placeholder, onSubmit)
         sessions[player.uniqueId] = session

@@ -1,5 +1,6 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
+import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackSession
 import com.github.sahyuya.oyasaiMusic.model.Song
 import net.kyori.adventure.text.Component
@@ -8,6 +9,7 @@ import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
+import org.bukkit.inventory.meta.SkullMeta
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -100,14 +102,15 @@ object GuiChrome {
         controllerState: PlayerControllerState,
         sortLabel: String,
         viewer: Player,
+        plugin: OyasaiMusic,
         actionModeCategory: String? = null,
     ) {
-        renderNav(inventory, activeTab, viewer, actionModeCategory)
+        renderNav(inventory, activeTab, viewer, plugin, actionModeCategory)
         renderController(inventory, controllerState, sortLabel)
     }
 
-    private fun renderNav(inventory: Inventory, activeTab: NavTab?, viewer: Player, actionModeCategory: String?) {
-        inventory.setItem(NavTab.MY_SONGS.slot, navItem(Material.PLAYER_HEAD, "自作楽曲一覧", NavTab.MY_SONGS == activeTab))
+    private fun renderNav(inventory: Inventory, activeTab: NavTab?, viewer: Player, plugin: OyasaiMusic, actionModeCategory: String?) {
+        inventory.setItem(NavTab.MY_SONGS.slot, mySongsNavItem(viewer, plugin, NavTab.MY_SONGS == activeTab))
         inventory.setItem(NavTab.SEARCH.slot, navItem(Material.RED_CONCRETE, "検索", NavTab.SEARCH == activeTab))
         inventory.setItem(NavTab.ALL_SONGS.slot, navItem(Material.YELLOW_CONCRETE, "全楽曲一覧", NavTab.ALL_SONGS == activeTab))
         inventory.setItem(
@@ -133,6 +136,34 @@ object GuiChrome {
                 .glint(NavTab.ACTION_MODE == activeTab)
                 .build(),
         )
+    }
+
+    /**
+     * ①タブ: サヒュヤ氏の指示により、スティーブ固定ヘッドではなく開いたプレイヤー自身のスキンを使い、
+     * ホバーで自分の統計（UI/UX設計書2章）を表示する。オンラインプレイヤーの
+     * [Player.getPlayerProfile] はテクスチャ解決済みのため同期的に組み立てられる。
+     */
+    private fun mySongsNavItem(viewer: Player, plugin: OyasaiMusic, active: Boolean): ItemStack {
+        val stats = AuthorStatsCache.get(plugin, viewer.uniqueId)
+        val lore = mutableListOf<Component>()
+        if (stats != null) {
+            lore += Component.text("総いいね数: ${stats.totalLikes}", NamedTextColor.GRAY)
+            lore += Component.text("総お気に入り数: ${stats.totalFavorites}", NamedTextColor.GRAY)
+            lore += Component.text("総再生回数: ${stats.totalViews}", NamedTextColor.GRAY)
+            lore += Component.text("総フォロワー数: ${stats.totalFollowers}", NamedTextColor.GRAY)
+        } else {
+            lore += Component.text("統計を読み込み中...", NamedTextColor.DARK_GRAY)
+        }
+
+        val item = ItemStack(Material.PLAYER_HEAD)
+        item.editMeta { meta ->
+            meta as SkullMeta
+            meta.playerProfile = viewer.playerProfile
+            meta.displayName(Component.text("自作楽曲一覧", if (active) NamedTextColor.YELLOW else NamedTextColor.WHITE))
+            meta.lore(lore)
+            meta.setEnchantmentGlintOverride(if (active) true else null)
+        }
+        return item
     }
 
     private fun navItem(material: Material, label: String, active: Boolean): ItemStack =

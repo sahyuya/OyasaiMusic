@@ -1,10 +1,13 @@
 package com.github.sahyuya.oyasaiMusic.command
 
+import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.audio.CircuitRecorder
 import com.github.sahyuya.oyasaiMusic.audio.GridRecorder
 import com.github.sahyuya.oyasaiMusic.audio.RecordingSessionManager
 import com.github.sahyuya.oyasaiMusic.db.SongRepository
+import com.github.sahyuya.oyasaiMusic.gui.MenuManager
+import com.github.sahyuya.oyasaiMusic.gui.SongSettingsScreen
 import com.github.sahyuya.oyasaiMusic.model.NoteEvent
 import com.sk89q.worldedit.WorldEdit
 import com.sk89q.worldedit.bukkit.BukkitAdapter
@@ -15,7 +18,6 @@ import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
-import org.bukkit.plugin.Plugin
 import java.io.File
 import java.util.UUID
 
@@ -26,15 +28,18 @@ import java.util.UUID
  *   /record we default      回路型(レッドストーン)録音
  *   /record start <1-4>     動的録音の開始
  *   /record stop            動的録音の終了・保存
+ *
+ * GUIフェーズで追加: 録音完了（下書き保存）の直後、サヒュヤ氏の指示により
+ * 楽曲設定画面([SongSettingsScreen])を自動的に開き、その場でタイトル等を設定できるようにする。
  */
 class RecordCommand(
-    private val plugin: Plugin,
+    private val plugin: OyasaiMusic,
     private val songRepository: SongRepository,
     private val sessionManager: RecordingSessionManager,
     private val audioDirectory: File,
     private val defaultRecordMaterial: String,
     private val defaultPrice: Int,
-    private val menuManager: com.github.sahyuya.oyasaiMusic.gui.MenuManager
+    private val menuManager: MenuManager, // GUIフェーズで追加
 ) : CommandExecutor, TabCompleter {
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
@@ -111,7 +116,7 @@ class RecordCommand(
             player.sendMessage("§c録音の解析中にエラーが発生しました。")
             return
         }
-        // 回路型はBPM概念が無いため、便宜上120を基準BPMとして保存する（再生速度設定はGUIフェーズで変更可能にする想定）。
+        // 回路型はBPM概念が無いため、便宜上120を基準BPMとして保存する（再生速度設定はGUIで変更可能）。
         finalizeRecording(player, notes, bpm = 120)
     }
 
@@ -196,11 +201,16 @@ class RecordCommand(
                         fileName = fileName,
                         supportsPositional = supportsPositional,
                     )
+                    // GUIフェーズで追加: 保存した楽曲を読み直し、楽曲設定画面を自動的に開く。
+                    val savedSong = songRepository.findById(songId)
                     Bukkit.getScheduler().runTask(plugin, Runnable {
                         player.sendMessage(
-                            "§a録音が完了しました（楽曲ID: $songId, 音符数: ${notes.size}）。" +
-                                    "下書きとして保存されました。タイトル等の設定はGUI実装後に行えるようになります。"
+                            "§a録音が完了しました（音符数: ${notes.size}）。下書きとして保存されました。" +
+                                    "§eタイトルや公開設定はこのまま開く楽曲設定画面から行えます。"
                         )
+                        if (savedSong != null) {
+                            menuManager.open(player, SongSettingsScreen(plugin, menuManager, player, savedSong), rememberAsPrevious = false)
+                        }
                     })
                 } catch (e: Exception) {
                     plugin.logger.severe("録音の保存に失敗しました: ${e.message}")

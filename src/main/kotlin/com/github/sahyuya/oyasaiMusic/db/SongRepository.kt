@@ -91,6 +91,16 @@ class SongRepository(private val db: DatabaseManager) {
         }
     }
 
+    /** GUIフェーズで追加: OP専用「審査・履歴管理GUI」用の全楽曲一覧（公開/非公開を問わず全件対象）。 */
+    fun listForReview(sort: ReviewSort, limit: Int, offset: Int): List<Song> = db.transaction { conn ->
+        val sql = "SELECT * FROM songs ORDER BY ${sort.orderBy} LIMIT ? OFFSET ?"
+        conn.prepareStatement(sql).use { ps ->
+            ps.setInt(1, limit)
+            ps.setInt(2, offset)
+            ps.executeQuery().use { rs -> rs.toSongList() }
+        }
+    }
+
     fun updateStatus(id: Long, status: SongStatus) = db.transaction { conn ->
         conn.prepareStatement("UPDATE songs SET status = ? WHERE id = ?").use { ps ->
             ps.setInt(1, status.code)
@@ -187,4 +197,15 @@ enum class SongSort(val orderBy: String) {
     TITLE_ASC("title ASC"),
     LIKES_DESC("likes DESC"),
     VIEWS_DESC("views DESC"),
+}
+
+/**
+ * OP専用：審査・履歴管理GUI用のソート順（UI/UX設計書4章補足）。
+ * 「未審査古い順」は審査済(status!=0)を後方に分離、「審査済新着順」は未審査(status=0)を後方に分離する。
+ */
+enum class ReviewSort(val orderBy: String) {
+    NEWEST("created_at DESC"),
+    OLDEST("created_at ASC"),
+    UNREVIEWED_OLDEST_FIRST("(status != 0) ASC, created_at ASC"),
+    REVIEWED_NEWEST_FIRST("(status = 0) ASC, created_at DESC"),
 }

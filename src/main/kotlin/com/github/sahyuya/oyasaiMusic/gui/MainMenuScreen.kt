@@ -55,7 +55,7 @@ class MainMenuScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
         renderRankingRow()
         ContentGrid.fillBorderIfEmpty(inventory, Material.WHITE_STAINED_GLASS_PANE)
     }
@@ -163,7 +163,7 @@ class MainMenuScreen(
         when (slot) {
             claimSlot -> claimRewards()
             adminEntrySlot -> if (viewer.hasPermission("oyasaimusic.admin")) {
-                viewer.sendMessage("§e審査・履歴管理GUIは近日実装予定です。")
+                menuManager.open(viewer, AdminReviewScreen(plugin, menuManager, viewer))
             }
         }
     }

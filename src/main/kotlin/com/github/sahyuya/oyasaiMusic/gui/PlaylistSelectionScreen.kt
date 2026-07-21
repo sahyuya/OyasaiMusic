@@ -16,7 +16,8 @@ import org.bukkit.event.inventory.InventoryClickEvent
  * （左列緑タブから直接開く[FavoritesPlaylistsScreen]とは別物）。
  *
  * サヒュヤ氏の指示により、コンテンツ領域(1,4)＝slot37に「戻る」ボタン(矢)を設置する。
- * 背景は緑タブに合わせて[Material.LIME_STAINED_GLASS_PANE]。
+ * 背景装飾は使わない（他のプレイリスト系画面と同様、5×8フル表示・左上(slot1)から詰めて
+ * 並べる表示に統一。ただしslot37は戻るボタン用に予約するため、コンテンツからは除外する）。
  */
 class PlaylistSelectionScreen(
     private val plugin: OyasaiMusic,
@@ -26,9 +27,10 @@ class PlaylistSelectionScreen(
 ) : BaseGridMenu(viewer, Component.text("お気に入り♪プレイリスト選択")) {
 
     companion object {
-        val SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
-        private const val FAVORITES_INDEX = 0
         private const val BACK_SLOT = 37
+        // サヒュヤ氏の指示: 5×8フル(40スロット)、slot1(左上)から詰めて表示する。戻るボタン分のみ除く。
+        val SLOTS: List<Int> = com.github.sahyuya.oyasaiMusic.gui.ContentGrid.SLOTS.filter { it != BACK_SLOT }
+        private const val FAVORITES_INDEX = 0
     }
 
     private var playlists: List<Playlist> = emptyList()
@@ -49,7 +51,7 @@ class PlaylistSelectionScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
 
         inventory.setItem(
             SLOTS[FAVORITES_INDEX],
@@ -136,7 +138,7 @@ class PlaylistSelectionScreen(
     }
 
     private fun createPlaylistAndAdd() {
-        AnvilTextInput.open(plugin, viewer, Component.text("新しいプレイリスト名")) { name ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("新しいプレイリスト名")) { name ->
             Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
                 val playlistId = plugin.playlistRepository.create(viewer.uniqueId, name)
                 val songId = targetSong.id

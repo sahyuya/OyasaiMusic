@@ -43,7 +43,8 @@ class PlaylistDetailScreen private constructor(
 ) : BaseGridMenu(viewer, Component.text(playlist?.name ?: "お気に入り")) {
 
     companion object {
-        val SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        // サヒュヤ氏の指示: 5×8フル(40スロット)、slot1(左上)から詰めて表示する。
+        val SLOTS: List<Int> = ContentGrid.SLOTS
         /** 曲間の間隔（サヒュヤ氏の指示: 約1秒。20tick=1000ms）。 */
         private const val ADVANCE_DELAY_TICKS = 20L
 
@@ -86,17 +87,18 @@ class PlaylistDetailScreen private constructor(
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(
             inventory, null, state, sortLabel = "設定順",
-            viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_DETAIL,
+            viewer = viewer, plugin = plugin, actionModeCategory = ActionModeCategory.PLAYLIST_DETAIL,
         )
 
         SLOTS.forEachIndexed { index, slot ->
-            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it)) }
+            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it, state)) }
         }
     }
 
-    private fun songIcon(song: Song): org.bukkit.inventory.ItemStack {
+    private fun songIcon(song: Song, state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
         val confirming = pendingRemoveSongId == song.id
         val dragging = draggingSongId == song.id
+        val nowPlaying = state.isPlaying && state.nowPlayingSong?.id == song.id
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
 
         val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
@@ -105,12 +107,13 @@ class PlaylistDetailScreen private constructor(
             dragging -> lore += Component.text("移動中… 移動先をクリック（再クリックでキャンセル）", NamedTextColor.AQUA)
             draggingSongId != null -> lore += Component.text("クリックでここに移動", NamedTextColor.AQUA)
             confirming -> lore += Component.text("もう一度Shift+右クリックで除外確定", NamedTextColor.RED)
+            nowPlaying -> lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
         }
 
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
             .name(Component.text(song.title, NamedTextColor.WHITE))
             .lore(lore)
-            .glint(confirming || dragging)
+            .glint(confirming || dragging || nowPlaying)
             .build()
     }
 

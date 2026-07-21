@@ -69,6 +69,19 @@ class SocialRepository(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * GUIフェーズで追加: 指定した作者の全楽曲に対する、お気に入り登録の合計件数。
+     * 左タブ①(自作楽曲一覧タブ)のホバー統計「総お気に入り数」用（[AuthorStatsCache]参照）。
+     */
+    fun countFavoritesForAuthor(authorUuid: UUID): Long = db.transaction { conn ->
+        conn.prepareStatement(
+            "SELECT COUNT(*) FROM favorites f JOIN songs s ON s.id = f.song_id WHERE s.author_uuid = ?"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(authorUuid))
+            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
+        }
+    }
+
     // ---------- フォロー ----------
 
     fun follow(followerUuid: UUID, targetUuid: UUID): Boolean = db.transaction { conn ->

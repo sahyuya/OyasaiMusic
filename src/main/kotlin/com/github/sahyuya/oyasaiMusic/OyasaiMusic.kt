@@ -1,5 +1,6 @@
 package com.github.sahyuya.oyasaiMusic
 
+import com.github.sahyuya.oyasaiMusic.audio.AmbientPlaybackRegistry
 import com.github.sahyuya.oyasaiMusic.audio.NotePlayListener
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
@@ -73,6 +74,8 @@ class OyasaiMusic : JavaPlugin() {
     lateinit var menuManager: MenuManager
         private set
     lateinit var playbackController: PlaybackController
+        private set
+    lateinit var ambientPlaybackRegistry: AmbientPlaybackRegistry
         private set
 
     override fun onEnable() {

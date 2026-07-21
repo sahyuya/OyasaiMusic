@@ -17,7 +17,8 @@ import org.bukkit.event.inventory.InventoryClickEvent
  * 使う特別な擬似プレイリスト）、続けてプレイリスト一覧（[com.github.sahyuya.oyasaiMusic.db.PlaylistRepository]）、
  * 末尾に「新規作成」ボタンを表示する。
  *
- * 背景は緑タブに合わせて[Material.LIME_STAINED_GLASS_PANE]（参照画像の板ガラス装飾）。
+ * 背景装飾は使わない（サヒュヤ氏の指示: 緑板ガラス枠を廃止し、全楽曲一覧等と同じ
+ * 5×8フル表示・左上(slot1)から詰めて並べる表示に統一）。
  *
  * クリック動作はUI/UX設計書 5章「お気に入り・プレイリスト (リスト画面)」に準拠:
  *   左クリック=詳細を開く＆自動再生 / Shift+左=共有 / 右クリック=名前変更 / Shift+右=削除(要確認)
@@ -37,7 +38,8 @@ class FavoritesPlaylistsScreen(
 ) : BaseGridMenu(viewer, Component.text("お気に入り♪プレイリスト")) {
 
     companion object {
-        val SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } } // 32スロット
+        // サヒュヤ氏の指示: 5×8フル(40スロット)、slot1(左上)から詰めて表示する。
+        val SLOTS: List<Int> = ContentGrid.SLOTS
         private const val FAVORITES_INDEX = 0 // SLOTS[0] は常に「お気に入り」固定
     }
 
@@ -65,7 +67,7 @@ class FavoritesPlaylistsScreen(
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(
             inventory, NavTab.FAVORITES_PLAYLISTS, state, sortLabel = "-",
-            viewer = viewer, actionModeCategory = ActionModeCategory.PLAYLIST_LIST,
+            viewer = viewer, plugin = plugin, actionModeCategory = ActionModeCategory.PLAYLIST_LIST,
         )
 
         inventory.setItem(SLOTS[FAVORITES_INDEX], favoritesIcon(favoriteCount))
@@ -84,8 +86,6 @@ class FavoritesPlaylistsScreen(
                     .build(),
             )
         }
-
-        ContentGrid.fillBorderIfEmpty(inventory, Material.LIME_STAINED_GLASS_PANE)
     }
 
     private fun favoritesIcon(favoriteCount: Int) = GuiItemBuilder(Material.NETHER_STAR)
@@ -149,7 +149,7 @@ class FavoritesPlaylistsScreen(
     }
 
     private fun createPlaylist() {
-        AnvilTextInput.open(plugin, viewer, Component.text("新しいプレイリスト名")) { name ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("新しいプレイリスト名")) { name ->
             Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
                 plugin.playlistRepository.create(viewer.uniqueId, name)
                 Bukkit.getScheduler().runTask(plugin, Runnable {
@@ -161,7 +161,7 @@ class FavoritesPlaylistsScreen(
     }
 
     private fun renamePlaylist(playlist: Playlist) {
-        AnvilTextInput.open(plugin, viewer, Component.text("プレイリスト名を変更"), initialText = playlist.name) { newName ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("プレイリスト名を変更"), initialText = playlist.name) { newName ->
             Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
                 plugin.playlistRepository.rename(requireNotNull(playlist.id), newName)
                 Bukkit.getScheduler().runTask(plugin, Runnable {
@@ -195,7 +195,7 @@ class FavoritesPlaylistsScreen(
      * 失敗パス（プレイヤーが見つからない等）も含め、必ず [reload] でGUIを再表示すること。
      */
     private fun sharePlaylist(playlist: Playlist) {
-        AnvilTextInput.open(plugin, viewer, Component.text("共有先のプレイヤー名")) { targetName ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("共有先のプレイヤー名")) { targetName ->
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 val target = Bukkit.getPlayerExact(targetName)
                 if (target == null) {

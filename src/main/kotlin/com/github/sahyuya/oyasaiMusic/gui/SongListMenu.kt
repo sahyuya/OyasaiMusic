@@ -43,8 +43,8 @@ class SongListMenu(
 ) : BaseGridMenu(viewer, Component.text(title)) {
 
     companion object {
-        const val PAGE_SIZE = 40
-        val LIST_SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        const val PAGE_SIZE = 32
+        val LIST_SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
     }
 
     private var sortIndex = availableSorts.indexOf(initialSort).coerceAtLeast(0)
@@ -71,34 +71,39 @@ class SongListMenu(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, ownTab, state, sortLabel = sortDisplayName(currentSort()), viewer = viewer, actionModeCategory = ActionModeCategory.SONG_LIST)
+        GuiChrome.render(inventory, ownTab, state, sortLabel = sortDisplayName(currentSort()), viewer = viewer, plugin = plugin, actionModeCategory = ActionModeCategory.SONG_LIST)
 
         LIST_SLOTS.forEachIndexed { index, slot ->
-            inventory.setItem(slot, pageSongs.getOrNull(index)?.let(::songIcon))
+            inventory.setItem(slot, pageSongs.getOrNull(index)?.let { songIcon(it, state) })
         }
     }
 
-    private fun songIcon(song: Song): org.bukkit.inventory.ItemStack {
+    private fun songIcon(song: Song, state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
+        val nowPlaying = state.isPlaying && state.nowPlayingSong?.id == song.id
 
         // UI/UX設計書8章「未公開（下書き）状態: …「レコードの破片」として…」に対応。
         // 公開済みでない楽曲(自分の作成中の楽曲)は、実際のレコード種類ではなく
         // レコードの欠片(DISC_FRAGMENT_5)で視覚的に区別する（サヒュヤ氏の指示で追加）。
         if (!song.published) {
             val lore = mutableListOf<Component>(Component.text("非公開（自分だけに表示）", NamedTextColor.DARK_GRAY))
-                lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-")
+            lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-")
+            if (nowPlaying) lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
             return GuiItemBuilder(Material.DISC_FRAGMENT_5)
                 .name(Component.text("[下書き] ${song.title}", NamedTextColor.GRAY))
                 .lore(lore)
+                .glint(nowPlaying)
                 .tag(SONG_ID_KEY, (song.id ?: -1).toString())
                 .build()
         }
 
         val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
         lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "再生", "詳細", "いいね", "お気に入り追加")
+        if (nowPlaying) lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
         return GuiItemBuilder(materialFor(song.recordMaterial))
             .name(Component.text(song.title, NamedTextColor.WHITE))
             .lore(lore)
+            .glint(nowPlaying)
             .tag(SONG_ID_KEY, (song.id ?: -1).toString())
             .build()
     }
@@ -136,7 +141,7 @@ class SongListMenu(
         val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
         val action = resolveAction(event, isBedrock)
         when (action) {
-            ActionMode.PRIMARY -> plugin.playbackController.play(viewer, song)
+            ActionMode.PRIMARY -> playSong(song)
             ActionMode.SECONDARY -> {
                 // 下書き楽曲は「詳細」ではなく直接「設定」を開く方が実用的なため分岐する。
                 if (!song.published && (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin"))) {
@@ -172,5 +177,33 @@ class SongListMenu(
 
     private fun favoriteSong(song: Song) {
         menuManager.open(viewer, PlaylistSelectionScreen(plugin, menuManager, viewer, song))
+    }
+
+    /**
+     * サヒュヤ氏の指示「シャッフル、ループはプレイリスト外でもどこでも使えるように」への対応
+     * （UI/UX設計書6章「全楽曲一覧/検索結果: 1曲で停止。ただしシャッフルON時はリスト内から
+     * ランダムに自動再生を継続。」に準拠）。
+     *   - シャッフルOFF・ループOFF: 1曲で停止（従来通り）
+     *   - シャッフルON: 再生完了ごとに、現在表示中のページ内(公開楽曲のみ)からランダムな1曲へ進む
+     *   - シャッフルOFF・ループ=1曲: 同じ曲を繰り返す
+     * ページ内からのランダム選出という簡易実装のため、他ページの楽曲までは対象にならない
+     * （要確認: 全件対象にする場合はDB側のランダム抽出クエリが別途必要）。
+     */
+    private fun playSong(song: Song) {
+        plugin.playbackController.play(viewer, song, onCompletion = { handleAutoAdvance(song) })
+    }
+
+    private fun handleAutoAdvance(justFinished: Song) {
+        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
+        when {
+            state.loopMode == LoopMode.SINGLE -> playSong(justFinished)
+            state.shuffle -> {
+                val candidates = pageSongs.filter { it.published && it.id != justFinished.id }
+                    .ifEmpty { pageSongs.filter { it.published } }
+                val next = candidates.randomOrNull() ?: return
+                playSong(next)
+            }
+            else -> {} // シャッフルOFF・ループOFF(またはLIST): 単曲再生のみ（設計書6章）
+        }
     }
 }
