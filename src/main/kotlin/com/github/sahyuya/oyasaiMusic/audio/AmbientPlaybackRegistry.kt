@@ -41,6 +41,9 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
 
     fun register(location: Location, song: Song, range: AmbientRange, trigger: AmbientTrigger, loop: Boolean) {
         val k = key(location)
+        // 既に何か設置されていた場合、その再生セッションを確実に止めてから上書きする
+        // （そうしないと古いセッションが止まらず二重に音が鳴り続けるバグになる）。
+        entries[k]?.session?.let { plugin.playbackEngine.stop(it) }
         entries[k] = AmbientEntry(location.clone(), song, range, trigger, loop)
         if (trigger == AmbientTrigger.JUKEBOX) startPlayback(k)
     }

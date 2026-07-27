@@ -75,7 +75,7 @@ class SongSettingsScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
 
         if (!hasAccess()) {
             inventory.setItem(
@@ -182,7 +182,7 @@ class SongSettingsScreen(
     }
 
     private fun editTitle() {
-        AnvilTextInput.open(plugin, viewer, Component.text("題名を変更"), initialText = song.title) { newTitle ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("題名を変更"), initialText = song.title) { newTitle ->
             Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
                 plugin.songRepository.updateSettings(id = requireNotNull(song.id), title = newTitle)
                 Bukkit.getScheduler().runTask(plugin, Runnable { reloadAndReopen("題名を変更しました: $newTitle") })
@@ -191,7 +191,7 @@ class SongSettingsScreen(
     }
 
     private fun editBpm() {
-        AnvilTextInput.open(plugin, viewer, Component.text("BPMを変更"), initialText = song.bpm.toString()) { text ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("BPMを変更"), initialText = song.bpm.toString()) { text ->
             val bpm = text.toIntOrNull()
             if (bpm == null || bpm <= 0) {
                 Bukkit.getScheduler().runTask(plugin, Runnable {
@@ -208,7 +208,7 @@ class SongSettingsScreen(
     }
 
     private fun editPrice() {
-        AnvilTextInput.open(plugin, viewer, Component.text("レコード価格を変更"), initialText = song.price.toString()) { text ->
+        AnvilTextInputSession.open(plugin, viewer, Component.text("レコード価格を変更"), initialText = song.price.toString()) { text ->
             val price = text.toIntOrNull()
             if (price == null || price < 0) {
                 Bukkit.getScheduler().runTask(plugin, Runnable {
@@ -244,14 +244,32 @@ class SongSettingsScreen(
         })
     }
 
+    /**
+     * UI/UX設計書6章「新曲が公開された際、サーバー全体にチャット通知を行い、クリックで
+     * 即座にその曲の詳細GUIを開き再生できる。」に対応。/musicopenコマンドへのRUN_COMMAND
+     * ClickEventでクリック時にGUIを開けるようにしている。
+     */
     private fun togglePublish() {
         val newPublished = !song.published
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
             plugin.songRepository.setPublished(requireNotNull(song.id), newPublished)
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 reloadAndReopen(if (newPublished) "公開しました。" else "非公開(下書き)に戻しました。")
+                if (newPublished) broadcastNewSong()
             })
         })
+    }
+
+    private fun broadcastNewSong() {
+        val authorName = viewer.name
+        val message = Component.text("♪ 新曲公開: ", NamedTextColor.LIGHT_PURPLE)
+            .append(Component.text("「${song.title}」", NamedTextColor.AQUA))
+            .append(Component.text(" by $authorName ", NamedTextColor.GRAY))
+            .append(
+                Component.text("[クリックで再生]", NamedTextColor.GREEN)
+                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/musicopen ${song.id}")),
+            )
+        Bukkit.getOnlinePlayers().forEach { it.sendMessage(message) }
     }
 
     private fun submitForReview() {

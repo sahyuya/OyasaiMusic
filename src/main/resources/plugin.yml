@@ -34,6 +34,9 @@ commands:
       /getmusicplayer          - 自分自身に音楽プレイヤーを配布
       /getmusicplayer <player> - 指定プレイヤーに配布（OP/コンソール専用）
     permission: oyasaimusic.use
+  musicopen:
+    description: 新曲公開のチャット通知から楽曲詳細画面を開く内部コマンド（プレイヤーが直接打つ想定ではない）
+    permission: oyasaimusic.use
 
 permissions:
   oyasaimusic.admin:

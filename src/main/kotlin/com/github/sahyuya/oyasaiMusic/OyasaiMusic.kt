@@ -8,6 +8,7 @@ import com.github.sahyuya.oyasaiMusic.audio.PlaybackModeService
 import com.github.sahyuya.oyasaiMusic.audio.RecordingSessionManager
 import com.github.sahyuya.oyasaiMusic.command.GetMusicPlayerCommand
 import com.github.sahyuya.oyasaiMusic.command.MusicMenuCommand
+import com.github.sahyuya.oyasaiMusic.command.MusicOpenCommand
 import com.github.sahyuya.oyasaiMusic.command.PlaytestCommand
 import com.github.sahyuya.oyasaiMusic.command.RecordCommand
 import com.github.sahyuya.oyasaiMusic.db.DatabaseManager
@@ -23,6 +24,7 @@ import com.github.sahyuya.oyasaiMusic.db.ViewCountService
 import com.github.sahyuya.oyasaiMusic.gui.MenuManager
 import com.github.sahyuya.oyasaiMusic.gui.PlaybackController
 import com.github.sahyuya.oyasaiMusic.gui.PlayerControllerStateService
+import org.bukkit.Bukkit
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
 
@@ -190,12 +192,23 @@ class OyasaiMusic : JavaPlugin() {
             cmd.setExecutor(executor)
             cmd.tabCompleter = executor
         } ?: logger.warning("getmusicplayerコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+
+        getCommand("musicopen")?.let { cmd ->
+            cmd.setExecutor(MusicOpenCommand(this))
+        } ?: logger.warning("musicopenコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+
+        // ---- 環境BGM用レコード（UI/UX設計書9章） ----
+        ambientPlaybackRegistry = AmbientPlaybackRegistry(this)
+        server.pluginManager.registerEvents(PhysicalRecordListener(this), this)
+        // 接近トリガーの判定・範囲内リスナーの追従のため1秒ごとに巡回する。
+        Bukkit.getScheduler().runTaskTimer(this, Runnable { ambientPlaybackRegistry.tick() }, 20L, 20L)
         // ============ GUIフェーズ追加ここまで ============
 
         logger.info("OyasaiMusic (GUIフェーズ着手) を有効化しました。")
     }
 
     override fun onDisable() {
+        if (::ambientPlaybackRegistry.isInitialized) ambientPlaybackRegistry.stopAll()
         if (::playbackEngine.isInitialized) playbackEngine.shutdown()
         if (::databaseManager.isInitialized) databaseManager.close()
         logger.info("OyasaiMusicを無効化しました。")
