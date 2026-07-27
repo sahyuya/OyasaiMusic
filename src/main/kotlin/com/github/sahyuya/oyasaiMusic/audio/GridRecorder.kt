@@ -20,6 +20,15 @@ import org.bukkit.block.data.type.NoteBlock as BukkitNoteBlock
  */
 object GridRecorder {
 
+    /** 遅延適用後に先頭が負時刻となった音符も、全体を同量シフトして保持するための内部表現。 */
+    private data class RawNote(
+        val timeMs: Int,
+        val instrument: Int,
+        val pitch: Byte,
+        val volume: Int,
+        val pan: Int,
+    )
+
     /**
      * @param clipboard 走査対象のFAWEクリップボード（プレイヤーが事前に //copy 等で確保したもの）
      * @param bpm 基準BPM
@@ -35,7 +44,7 @@ object GridRecorder {
         val max = region.maximumPoint
         val axis = resolveAxis(timeAxisFacing)
 
-        val notes = mutableListOf<NoteEvent>()
+        val rawNotes = mutableListOf<RawNote>()
 
         for (x in min.x()..max.x()) {
             for (y in min.y()..max.y()) {
@@ -46,16 +55,17 @@ object GridRecorder {
                     val noteBlockData = bukkitData as? BukkitNoteBlock ?: continue
 
                     val timeIndex = axis.indexOf(pos, min, max)
-                    val timeMs = (timeIndex * stepMs).toInt()
+                    val baseTimeMs = (timeIndex * stepMs).toInt()
 
                     var volume = 100
                     var pan = 0
                     val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromWorldPos(world, pos)
                     overrideVolume?.let { volume = it }
                     overridePan?.let { pan = it }
+                    val delayMs = SignOverrideProcessor.extractDelayFromWorldPos(world, pos, stepMs) ?: 0
 
-                    notes += NoteEvent(
-                        timeMs = timeMs,
+                    rawNotes += RawNote(
+                        timeMs = baseTimeMs + delayMs,
                         instrument = InstrumentMapper.toId(noteBlockData.instrument),
                         pitch = noteBlockData.note.id,
                         volume = volume,
@@ -64,7 +74,12 @@ object GridRecorder {
                 }
             }
         }
-        return notes
+        // 先頭列を早めた結果が負時刻になっても、全体を同量だけ後ろへずらして
+        // 音符間の相対タイミング（例: -1/16）を失わないようにする。
+        val offsetMs = (-(rawNotes.minOfOrNull { it.timeMs } ?: 0)).coerceAtLeast(0)
+        return rawNotes.map { raw ->
+            NoteEvent(raw.timeMs + offsetMs, raw.instrument, raw.pitch, raw.volume, raw.pan)
+        }
     }
 
     /**

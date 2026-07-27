@@ -5,24 +5,43 @@ import com.sk89q.worldedit.math.BlockVector3
 import org.bukkit.block.Block
 import org.bukkit.block.Sign
 import org.bukkit.block.sign.Side
+import kotlin.math.roundToInt
 
 /**
  * 録音処理（グリッド型・回路型・動的録音）で共通利用する、
- * 「音ブロックの真上(Y+1)にある看板」から Volume(1行目) / Pan(2行目) を
+ * 「音ブロックの真上(Y+1)にある看板」から Volume(1行目) / Pan(2行目) / Delay(3行目) を
  * 上書き取得するための処理（データ・システム設計書 3章）。
  *
  * 看板の記述例:
  *   1行目: 80        → Volume 80%
  *   2行目: -50        → Pan -50 (左寄り)
+ *   3行目: -1/16     → 四分音符を基準に16分音符ぶん早める
  * 数値として解釈できない・行が空の場合はそのフィールドの上書きを行わない(null)。
  */
 object SignOverrideProcessor {
+
+    private val DELAY_PATTERN = Regex("^([+-]?)(\\d+)(?:\\s*/\\s*(\\d+))?$")
 
     /** テキスト2行から (volume, pan) の上書き値を解析する。解釈できない場合はnull。 */
     fun parseLines(line1: String?, line2: String?): Pair<Int?, Int?> {
         val volume = line1?.trim()?.removeSuffix("%")?.toIntOrNull()?.coerceIn(0, 100)
         val pan = line2?.trim()?.toIntOrNull()?.coerceIn(-100, 100)
         return volume to pan
+    }
+
+    /**
+     * 3行目の分数をミリ秒へ変換する。`1/8` は八分音符、`-1/16` は負の十六分音符。
+     * 分母を省略した `1` は四分音符1個分として扱う。異常値は無視する。
+     */
+    fun parseDelayMillis(line3: String?, quarterNoteMs: Double): Int? {
+        if (quarterNoteMs <= 0.0 || !quarterNoteMs.isFinite()) return null
+        val match = DELAY_PATTERN.matchEntire(line3?.trim().orEmpty()) ?: return null
+        val numerator = match.groupValues[2].toLongOrNull() ?: return null
+        val denominator = match.groupValues[3].ifEmpty { "1" }.toLongOrNull() ?: return null
+        if (denominator <= 0 || numerator > 10_000 || denominator > 10_000) return null
+        val sign = if (match.groupValues[1] == "-") -1 else 1
+        val millis = sign * quarterNoteMs * numerator.toDouble() / denominator.toDouble()
+        return if (millis.isFinite() && millis in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) millis.roundToInt() else null
     }
 
     /**
@@ -38,6 +57,16 @@ object SignOverrideProcessor {
             parseLines(front.getLine(0), front.getLine(1))
         } catch (_: Exception) {
             null to null
+        }
+    }
+
+    /** 実ワールド上の看板3行目から、指定した四分音符長に対する遅延を取得する。 */
+    fun extractDelayFromWorld(noteBlock: Block, quarterNoteMs: Double): Int? {
+        val state = noteBlock.getRelative(0, 1, 0).state as? Sign ?: return null
+        return try {
+            parseDelayMillis(state.getSide(Side.FRONT).getLine(2), quarterNoteMs)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -57,6 +86,12 @@ object SignOverrideProcessor {
         } catch (_: Exception) {
             null to null
         }
+    }
+
+    fun extractDelayFromWorldPos(world: org.bukkit.World, noteBlockPos: BlockVector3, quarterNoteMs: Double): Int? = try {
+        extractDelayFromWorld(world.getBlockAt(noteBlockPos.x(), noteBlockPos.y(), noteBlockPos.z()), quarterNoteMs)
+    } catch (_: Exception) {
+        null
     }
 
     private val TEXT_FIELD_PATTERN = Regex("\"text\"\\s*:\\s*\"(.*?)\"")

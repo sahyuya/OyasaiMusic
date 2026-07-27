@@ -39,12 +39,12 @@ class SongDetailScreen(
     private val authorHeadSlot = 12 // クリックで作者プロフィール(作品一覧)へ
     private val followSlot = 13     // クリックでフォロー切替
     private val positionalModeSlot = 14 // 通常/立体音響再生の選択（追加項目.txt対応。楽曲にPan指定が無い場合は選択不可）
-    private val referenceUrlSlot = 20 // クリックで参考リンクをチャット出力
-    private val likeSlot = 21         // クリックでいいね
-    private val favoriteSlot = 22     // クリックでお気に入り/プレイリスト追加
-    private val statsSlot = 23        // 統計表示（非インタラクティブ）
-    private val settingsSlot = 24     // 作者/OPのみ: 楽曲設定画面へ（UI/UX設計書表には無いが実用上必要なため追加）
-    private val buyRecordSlot = 25    // レコードを購入（サヒュヤ氏の指示で追加。UI/UX設計書7章のレコード販売に対応）
+    private val settingsSlot = 16     // 作者/OPのみ: 楽曲設定画面へ（UI/UX設計書表には無いが実用上必要なため追加）
+    private val likeSlot = 20         // クリックでいいね
+    private val favoriteSlot = 21     // クリックでお気に入り/プレイリスト追加
+    private val buyRecordSlot = 22    // レコードを購入（サヒュヤ氏の指示で追加。UI/UX設計書7章のレコード販売に対応）
+    private val statsSlot = 23// 統計表示（非インタラクティブ）
+    private val referenceUrlSlot = 24 // クリックで参考リンクをチャット出力
     private val backSlot = 37         // サヒュヤ氏指定: 戻る(矢)
 
     private var song: Song = initialSong
@@ -81,14 +81,14 @@ class SongDetailScreen(
         inventory.setItem(authorHeadSlot, authorHeadItem())
         inventory.setItem(followSlot, followItem())
         inventory.setItem(positionalModeSlot, positionalModeItem())
-        inventory.setItem(referenceUrlSlot, referenceUrlItem())
         inventory.setItem(likeSlot, likeItem())
         inventory.setItem(favoriteSlot, GuiItemBuilder(Material.CHISELED_BOOKSHELF)
             .name(Component.text("お気に入り/プレイリストに追加", NamedTextColor.YELLOW)).build())
-        inventory.setItem(statsSlot, statsItem())
         inventory.setItem(buyRecordSlot, buyRecordItem())
+        inventory.setItem(statsSlot, statsItem())
+        inventory.setItem(referenceUrlSlot, referenceUrlItem())
         if (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin")) {
-            inventory.setItem(settingsSlot, GuiItemBuilder(Material.WRITABLE_BOOK)
+            inventory.setItem(settingsSlot, GuiItemBuilder(Material.COMPARATOR)
                 .name(Component.text("楽曲設定を開く", NamedTextColor.LIGHT_PURPLE)).build())
         } else {
             inventory.setItem(settingsSlot, null)
@@ -131,7 +131,7 @@ class SongDetailScreen(
         return item
     }
 
-    private fun followItem() = GuiItemBuilder(Material.PLAYER_HEAD)
+    private fun followItem() = GuiItemBuilder(Material.TOTEM_OF_UNDYING)
         .name(Component.text(if (isFollowing) "フォロー中" else "フォローする", if (isFollowing) NamedTextColor.GREEN else NamedTextColor.YELLOW))
         .lore(Component.text("クリックで切替", NamedTextColor.DARK_GRAY))
         .glint(isFollowing)
@@ -169,7 +169,7 @@ class SongDetailScreen(
         )
         .build()
 
-    private fun likeItem() = GuiItemBuilder(Material.RED_DYE)
+    private fun likeItem() = GuiItemBuilder(Material.CHERRY_STAIRS)
         .name(Component.text(if (hasLiked) "いいね済み" else "いいね", if (hasLiked) NamedTextColor.GREEN else NamedTextColor.YELLOW))
         .lore(Component.text("総いいね数: ${song.likes}", NamedTextColor.GRAY))
         .glint(hasLiked)

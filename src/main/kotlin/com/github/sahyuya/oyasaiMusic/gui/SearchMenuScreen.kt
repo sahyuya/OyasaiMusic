@@ -40,7 +40,7 @@ class SearchMenuScreen(
         inventory.setItem(titleSearchSlot, GuiItemBuilder(Material.OAK_SIGN).name(Component.text("題名検索", NamedTextColor.YELLOW)).build())
         inventory.setItem(authorSearchSlot, GuiItemBuilder(Material.LECTERN).name(Component.text("作者検索", NamedTextColor.YELLOW)).build())
         inventory.setItem(onlineAuthorsSlot, GuiItemBuilder(Material.PLAYER_HEAD).name(Component.text("オンライン作者一覧", NamedTextColor.YELLOW)).build())
-        inventory.setItem(followingAuthorsSlot, GuiItemBuilder(Material.PLAYER_HEAD).name(Component.text("フォロー中作者一覧", NamedTextColor.YELLOW)).build())
+        inventory.setItem(followingAuthorsSlot, GuiItemBuilder(Material.TOTEM_OF_UNDYING).name(Component.text("フォロー中作者一覧", NamedTextColor.YELLOW)).build())
 
         ContentGrid.fillBorderIfEmpty(inventory, Material.RED_STAINED_GLASS_PANE)
     }

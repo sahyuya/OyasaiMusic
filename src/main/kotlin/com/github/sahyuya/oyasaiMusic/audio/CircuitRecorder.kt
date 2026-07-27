@@ -41,6 +41,16 @@ import java.util.ArrayDeque
 object CircuitRecorder {
 
     private data class Node(val pos: BlockVector3, val timeMs: Int)
+    private data class RawNote(
+        val timeMs: Int,
+        val instrument: Int,
+        val pitch: Byte,
+        val volume: Int,
+        val pan: Int,
+    )
+
+    /** 回路型にはBPMが無いため、看板の音価指定では120BPM相当の四分音符長を用いる。 */
+    private const val QUARTER_NOTE_MS = 500.0
 
     // 水平4方位 + 真上/真下 + 1段上り + 1段下りの、ダスト(または通電した固体ブロックの上のダスト)が
     // 伝播しうる相対オフセット。真上(0,1,0)は「ノートブロックや電源ブロックの真上に乗ったダスト」を
@@ -84,7 +94,7 @@ object CircuitRecorder {
 
         val visited = HashSet<BlockVector3>()
         val queue = ArrayDeque<Node>()
-        val notes = mutableListOf<NoteEvent>()
+        val notes = mutableListOf<RawNote>()
         // (ノートブロック位置, 発音ミリ秒) の組で発音を重複記録しないようにする
         val firedNoteKeys = HashSet<Pair<BlockVector3, Int>>()
 
@@ -141,9 +151,10 @@ object CircuitRecorder {
             for ((dx, dy, dz) in DUST_NEIGHBOR_OFFSETS) {
                 val neighborPos = pos.add(dx, dy, dz)
                 if (!region.contains(neighborPos)) continue
-                if (!visited.add(neighborPos)) continue
                 val neighborData = blockDataAt(clipboard, neighborPos) ?: continue
-                if (neighborData.material == Material.REDSTONE_WIRE) {
+                // 非ダストまで visited に入れると、後続のリピーター出力先が「既訪問」と
+                // 誤認されてキュー投入される前に失われる。これが連鎖回路が一音で止まる原因だった。
+                if (neighborData.material == Material.REDSTONE_WIRE && visited.add(neighborPos)) {
                     queue.add(Node(neighborPos, timeMs))
                 }
             }
@@ -165,13 +176,21 @@ object CircuitRecorder {
                 if (!region.contains(outputPos)) continue
                 val delayMs = repeaterData.delay * 100
                 val newTime = timeMs + delayMs
-                if (visited.add(outputPos)) {
+                val outputData = blockDataAt(clipboard, outputPos) ?: continue
+                // リピーターの出力先がノートブロックの場合、出力先をキューに積むだけでは
+                // 「自分自身のノート」を判定する経路が無く、音が記録されない。
+                if (outputData is BukkitNoteBlock) {
+                    fireNoteAndContinue(outputData, outputPos, newTime, world, notes, firedNoteKeys, visited, queue)
+                } else if (visited.add(outputPos)) {
                     queue.add(Node(outputPos, newTime))
                 }
             }
         }
 
-        return notes
+        val offsetMs = (-(notes.minOfOrNull { it.timeMs } ?: 0)).coerceAtLeast(0)
+        return notes.map { raw ->
+            NoteEvent(raw.timeMs + offsetMs, raw.instrument, raw.pitch, raw.volume, raw.pan)
+        }
     }
 
     /**
@@ -184,7 +203,7 @@ object CircuitRecorder {
         pos: BlockVector3,
         timeMs: Int,
         world: World,
-        notes: MutableList<NoteEvent>,
+        notes: MutableList<RawNote>,
         firedNoteKeys: MutableSet<Pair<BlockVector3, Int>>,
         visited: MutableSet<BlockVector3>,
         queue: ArrayDeque<Node>,
@@ -196,9 +215,10 @@ object CircuitRecorder {
             val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromWorldPos(world, pos)
             overrideVolume?.let { volume = it }
             overridePan?.let { pan = it }
+            val delayMs = SignOverrideProcessor.extractDelayFromWorldPos(world, pos, QUARTER_NOTE_MS) ?: 0
 
-            notes += NoteEvent(
-                timeMs = timeMs,
+            notes += RawNote(
+                timeMs = timeMs + delayMs,
                 instrument = InstrumentMapper.toId(noteBlockData.instrument),
                 pitch = noteBlockData.note.id,
                 volume = volume,

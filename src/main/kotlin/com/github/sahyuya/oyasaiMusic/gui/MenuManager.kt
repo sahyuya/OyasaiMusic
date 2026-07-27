@@ -35,8 +35,8 @@ import java.util.concurrent.ConcurrentHashMap
 class MenuManager(private val plugin: OyasaiMusic) : Listener {
 
     companion object {
-        /** GUIクリックの連打対策（サヒュヤ氏の指示: 100msのクールタイム）。 */
-        private const val CLICK_COOLDOWN_MS = 100L
+        /** GUIクリックの連打対策（サヒュヤ氏の指示: 200msのクールタイム）。 */
+        private const val CLICK_COOLDOWN_MS = 200L
     }
 
     private val current = ConcurrentHashMap<UUID, OyasaiMenu>()

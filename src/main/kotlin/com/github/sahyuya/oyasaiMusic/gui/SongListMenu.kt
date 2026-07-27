@@ -43,8 +43,8 @@ class SongListMenu(
 ) : BaseGridMenu(viewer, Component.text(title)) {
 
     companion object {
-        const val PAGE_SIZE = 32
-        val LIST_SLOTS: List<Int> = (1..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
+        const val PAGE_SIZE = 40
+        val LIST_SLOTS: List<Int> = (0..4).flatMap { row -> (1..8).map { col -> row * 9 + col } }
     }
 
     private var sortIndex = availableSorts.indexOf(initialSort).coerceAtLeast(0)

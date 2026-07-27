@@ -16,7 +16,7 @@ import java.io.File
  * 設定可能項目: 公開、題名、BPM、レコードの種類、レコード価格、参考URL、オリジナル審査提出、楽曲削除。
  *
  * 【スロット配置（サヒュヤ氏の指示＋参照画像から確定/推定）】
- *   slot11: 現在のレコードのプレビュー（読み取り専用）
+ *   slot11: 現在のレコードのプレビュー（クリックで再生）
  *   slot12: オリジナル審査提出　※参照画像では扉アイコンに見えたが、8設定項目に合わせてここへ割当（要確認）
  *   slot20: 題名（サイン、Anvil入力）
  *   slot21: BPM（ロケット花火、Anvil数値入力）
@@ -41,13 +41,13 @@ class SongSettingsScreen(
 ) : BaseGridMenu(viewer, Component.text("楽曲設定")) {
 
     private val previewSlot = 11
-    private val submitReviewSlot = 12
+    private val publishSlot = 12
+    private val urlSlot = 14
+    private val submitReviewSlot = 15
     private val titleSlot = 20
     private val bpmSlot = 21
     private val recordTypeSlot = 22
     private val priceSlot = 23
-    private val urlSlot = 24
-    private val publishSlot = 25
     private val backSlot = 37
     private val deleteSlot = 44
 
@@ -90,17 +90,17 @@ class SongSettingsScreen(
         }
 
         inventory.setItem(previewSlot, previewItem())
+        inventory.setItem(publishSlot, publishItem())
+        inventory.setItem(urlSlot, GuiItemBuilder(Material.WRITTEN_BOOK).name(Component.text("参考URLを設定", NamedTextColor.YELLOW))
+            .lore(Component.text("現在: ${song.referenceUrl ?: "未設定"}", NamedTextColor.GRAY)).build())
         inventory.setItem(submitReviewSlot, submitReviewItem())
         inventory.setItem(titleSlot, GuiItemBuilder(Material.OAK_SIGN).name(Component.text("題名を変更", NamedTextColor.YELLOW))
             .lore(Component.text("現在: ${song.title}", NamedTextColor.GRAY)).build())
-        inventory.setItem(bpmSlot, GuiItemBuilder(Material.FIREWORK_ROCKET).name(Component.text("BPM(再生速度)を変更", NamedTextColor.YELLOW))
+        inventory.setItem(bpmSlot, GuiItemBuilder(Material.REPEATER).name(Component.text("BPM(再生速度)を変更", NamedTextColor.YELLOW))
             .lore(Component.text("現在: ${song.bpm}", NamedTextColor.GRAY)).build())
         inventory.setItem(recordTypeSlot, recordTypeItem())
         inventory.setItem(priceSlot, GuiItemBuilder(Material.EMERALD).name(Component.text("レコード価格を変更", NamedTextColor.YELLOW))
             .lore(Component.text("現在: ${song.price}円", NamedTextColor.GRAY)).build())
-        inventory.setItem(urlSlot, GuiItemBuilder(Material.WRITTEN_BOOK).name(Component.text("参考URLを設定", NamedTextColor.YELLOW))
-            .lore(Component.text("現在: ${song.referenceUrl ?: "未設定"}", NamedTextColor.GRAY)).build())
-        inventory.setItem(publishSlot, publishItem())
         inventory.setItem(backSlot, backButton())
         inventory.setItem(deleteSlot, deleteItem())
         ContentGrid.fillBorderIfEmpty(inventory, Material.BLACK_STAINED_GLASS_PANE)
@@ -169,6 +169,7 @@ class SongSettingsScreen(
         if (plugin.playbackController.handleControllerClick(slot, viewer)) return
 
         when (slot) {
+            previewSlot -> plugin.playbackController.play(viewer, song)
             backSlot -> menuManager.openPrevious(viewer)
             submitReviewSlot -> submitForReview()
             titleSlot -> editTitle()
