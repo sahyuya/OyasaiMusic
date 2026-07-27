@@ -7,6 +7,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.EOFException
+import java.io.IOException
 
 /**
  * 音源データ設計（データ・システム設計書 2章）に基づく独自バイナリ(.bin)フォーマットの
@@ -34,6 +35,7 @@ object SongAudioFile {
     const val HEADER_SIZE = 16
     const val NOTE_SIZE = 8
     const val CURRENT_VERSION: Short = 1
+    private const val MAX_NOTES = 1_000_000
 
     data class SongAudio(
         val version: Int,
@@ -69,6 +71,8 @@ object SongAudioFile {
 
     /** .bin ファイルを読み込み、ヘッダーと音符リストを返す。 */
     fun read(file: File): SongAudio {
+        require(file.isFile) { "音源ファイルが見つかりません: ${file.name}" }
+        require(file.length() >= HEADER_SIZE) { "音源ファイルのヘッダーが不完全です: ${file.name}" }
         DataInputStream(BufferedInputStream(file.inputStream())).use { input ->
             val magic = input.readInt()
             require(magic == MAGIC) { "不正な音源ファイルです（マジックナンバー不一致）: ${file.name}" }
@@ -76,6 +80,11 @@ object SongAudioFile {
             input.readUnsignedShort() // 予約領域を読み飛ばす
             val totalNotes = input.readInt()
             val totalDuration = input.readInt()
+            require(version == CURRENT_VERSION.toInt()) { "未対応の音源フォーマット(version=$version): ${file.name}" }
+            require(totalNotes in 0..MAX_NOTES) { "不正な音符数です: $totalNotes" }
+            require(totalDuration >= 0) { "不正な総再生時間です: $totalDuration" }
+            val expectedLength = HEADER_SIZE.toLong() + totalNotes.toLong() * NOTE_SIZE
+            require(file.length() >= expectedLength) { "音源ファイルが途中で切れています: ${file.name}" }
 
             val notes = ArrayList<NoteEvent>(totalNotes)
             repeat(totalNotes) {
@@ -93,15 +102,7 @@ object SongAudioFile {
                 )
             }
 
-            // 末尾に余分なデータが無いことを軽く検証（壊れたファイルの早期発見用）
-            if (input.available() > 0) {
-                try {
-                    input.readByte()
-                    // 読めてしまった場合はファイルが壊れている可能性が高いが、致命的ではないため警告のみに留める。
-                } catch (_: EOFException) {
-                    // 想定内
-                }
-            }
+            require(file.length() == expectedLength) { "音源ファイルに余分なデータがあります: ${file.name}" }
 
             return SongAudio(version = version, totalDurationMs = totalDuration, notes = notes)
         }

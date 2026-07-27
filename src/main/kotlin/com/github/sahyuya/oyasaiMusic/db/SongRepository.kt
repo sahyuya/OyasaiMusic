@@ -93,11 +93,24 @@ class SongRepository(private val db: DatabaseManager) {
 
     /** GUIフェーズで追加: OP専用「審査・履歴管理GUI」用の全楽曲一覧（公開/非公開を問わず全件対象）。 */
     fun listForReview(sort: ReviewSort, limit: Int, offset: Int): List<Song> = db.transaction { conn ->
-        val sql = "SELECT * FROM songs ORDER BY ${sort.orderBy} LIMIT ? OFFSET ?"
+        // 審査依頼済み、または既に判定履歴を持つ楽曲だけを対象にする。
+        val sql = "SELECT * FROM songs WHERE review_requested_at IS NOT NULL OR status != ? ORDER BY ${sort.orderBy} LIMIT ? OFFSET ?"
         conn.prepareStatement(sql).use { ps ->
-            ps.setInt(1, limit)
-            ps.setInt(2, offset)
+            ps.setInt(1, SongStatus.DRAFT.code)
+            ps.setInt(2, limit)
+            ps.setInt(3, offset)
             ps.executeQuery().use { rs -> rs.toSongList() }
+        }
+    }
+
+    /** 審査依頼を永続化する。同じ楽曲への再依頼では最初の依頼時刻を維持する。 */
+    fun requestReview(id: Long) = db.transaction { conn ->
+        conn.prepareStatement(
+            "UPDATE songs SET review_requested_at = COALESCE(review_requested_at, ?) WHERE id = ?"
+        ).use { ps ->
+            ps.setLong(1, System.currentTimeMillis() / 1000)
+            ps.setLong(2, id)
+            ps.executeUpdate()
         }
     }
 
@@ -181,6 +194,7 @@ class SongRepository(private val db: DatabaseManager) {
         fileName = getString("file_name"),
         supportsPositional = getInt("supports_positional") != 0,
         published = getInt("published") != 0,
+        reviewRequestedAt = getLong("review_requested_at").let { if (wasNull()) null else it },
     )
 
     private fun ResultSet.toSongList(): List<Song> {

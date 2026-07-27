@@ -35,7 +35,7 @@ class SearchMenuScreen(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, NavTab.SEARCH, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
+        GuiChrome.render(inventory, NavTab.SEARCH, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
 
         inventory.setItem(titleSearchSlot, GuiItemBuilder(Material.OAK_SIGN).name(Component.text("題名検索", NamedTextColor.YELLOW)).build())
         inventory.setItem(authorSearchSlot, GuiItemBuilder(Material.LECTERN).name(Component.text("作者検索", NamedTextColor.YELLOW)).build())
@@ -58,7 +58,7 @@ class SearchMenuScreen(
     }
 
     private fun openTitleSearch() {
-        AnvilTextInput.open(plugin = plugin, player = viewer, title = Component.text("題名で検索")) { text ->
+        AnvilTextInputSession.open(plugin = plugin, player = viewer, title = Component.text("題名で検索")) { text ->
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 menuManager.open(
                     viewer,
@@ -79,7 +79,7 @@ class SearchMenuScreen(
     }
 
     private fun openAuthorSearch() {
-        AnvilTextInput.open(plugin = plugin, player = viewer, title = Component.text("作者名で検索")) { text ->
+        AnvilTextInputSession.open(plugin = plugin, player = viewer, title = Component.text("作者名で検索")) { text ->
             Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
                 val matches = Bukkit.getOfflinePlayers().filter { it.name?.startsWith(text, ignoreCase = true) == true }.take(32)
                 Bukkit.getScheduler().runTask(plugin, Runnable {

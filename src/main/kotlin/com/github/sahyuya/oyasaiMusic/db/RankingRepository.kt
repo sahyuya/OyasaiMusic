@@ -97,5 +97,6 @@ class RankingRepository(private val db: DatabaseManager) {
         fileName = getString("file_name"),
         supportsPositional = getInt("supports_positional") != 0,
         published = getInt("published") != 0,
+        reviewRequestedAt = getLong("review_requested_at").let { if (wasNull()) null else it },
     )
 }

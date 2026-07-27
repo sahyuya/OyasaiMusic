@@ -21,6 +21,7 @@ import com.github.sahyuya.oyasaiMusic.db.SocialRepository
 import com.github.sahyuya.oyasaiMusic.db.SongRepository
 import com.github.sahyuya.oyasaiMusic.db.UserRepository
 import com.github.sahyuya.oyasaiMusic.db.ViewCountService
+import com.github.sahyuya.oyasaiMusic.economy.EconomyService
 import com.github.sahyuya.oyasaiMusic.gui.MenuManager
 import com.github.sahyuya.oyasaiMusic.gui.PlaybackController
 import com.github.sahyuya.oyasaiMusic.gui.PlayerControllerStateService
@@ -79,6 +80,8 @@ class OyasaiMusic : JavaPlugin() {
         private set
     lateinit var ambientPlaybackRegistry: AmbientPlaybackRegistry
         private set
+    lateinit var economyService: EconomyService
+        private set
 
     override fun onEnable() {
         // --- FAWE必須依存チェック（plugin.ymlのdependでも保証されるが、明示的なメッセージを出すため二重チェック） ---
@@ -121,6 +124,10 @@ class OyasaiMusic : JavaPlugin() {
             hourLimit = config.getInt("playback.view-limit-per-hour", 3),
             dayLimit = config.getInt("playback.view-limit-per-day", 10),
             viewsPerPoint = config.getInt("playback.views-per-point", 10),
+        )
+        economyService = EconomyService(
+            this,
+            config.getString("economy.points-command", "") ?: "",
         )
 
         // ============ GUIフェーズで追加: 録音システムより前に用意する必要がある ============

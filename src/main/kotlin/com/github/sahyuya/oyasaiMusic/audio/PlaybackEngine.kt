@@ -189,20 +189,19 @@ class PlaybackEngine(
             }
         }
 
-        // 再生終了時に必ず追従マーカーを解放する（onCompletionの有無に関わらず実行する）。
-        if (ctx.onCompletion != null) {
-            val delay = (ctx.totalDurationMs.toLong() + 50L - fromElapsedMs).coerceAtLeast(0)
-            val future = executor.schedule(
-                Runnable {
-                    if (session.isCancelled || session.isPaused) return@Runnable
-                    contexts.remove(session.sessionId)
-                    Bukkit.getScheduler().runTask(plugin, Runnable { ctx.onCompletion.invoke(session) })
-                },
-                delay,
-                TimeUnit.MILLISECONDS,
-            )
-            session.scheduledTasks.add(future)
-        }
+        // onCompletion が無い再生でも文脈を必ず解放する。解放しないと単発再生のたびに
+        // contexts が残り続け、長時間稼働時にメモリリークとなる。
+        val delay = (ctx.totalDurationMs.toLong() + 50L - fromElapsedMs).coerceAtLeast(0)
+        val future = executor.schedule(
+            Runnable {
+                if (session.isCancelled || session.isPaused) return@Runnable
+                contexts.remove(session.sessionId)
+                Bukkit.getScheduler().runTask(plugin, Runnable { ctx.onCompletion?.invoke(session) })
+            },
+            delay,
+            TimeUnit.MILLISECONDS,
+        )
+        session.scheduledTasks.add(future)
     }
 
     private fun dispatch(

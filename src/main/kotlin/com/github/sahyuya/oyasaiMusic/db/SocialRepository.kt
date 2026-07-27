@@ -139,6 +139,39 @@ class SocialRepository(private val db: DatabaseManager) {
         }
 
     /**
+     * 視聴上限を確認してから履歴追加までを同じDBロック内で行う。
+     * 個別の count/insert を別トランザクションにすると、同時に終了した複数再生が上限を
+     * すり抜けるため、このメソッドを視聴記録の入口として使う。
+     */
+    fun tryRecordViewWithinLimits(
+        userUuid: UUID,
+        songId: Long,
+        timestamp: Long,
+        hourLimit: Int,
+        dayLimit: Int,
+    ): Boolean = db.transaction { conn ->
+        val uuidBytes = UuidUtil.toBytes(userUuid)
+        fun countSince(since: Long): Long = conn.prepareStatement(
+            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ? AND timestamp >= ?"
+        ).use { ps ->
+            ps.setBytes(1, uuidBytes)
+            ps.setLong(2, songId)
+            ps.setLong(3, since)
+            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
+        }
+        if (countSince(timestamp - 3600) >= hourLimit || countSince(timestamp - 86_400) >= dayLimit) {
+            return@transaction false
+        }
+        conn.prepareStatement("INSERT INTO view_history (user_uuid, song_id, timestamp) VALUES (?, ?, ?)").use { ps ->
+            ps.setBytes(1, uuidBytes)
+            ps.setLong(2, songId)
+            ps.setLong(3, timestamp)
+            ps.executeUpdate()
+        }
+        true
+    }
+
+    /**
      * データ・システム設計書 1-3章の視聴制限ロジック用に、
      * 指定時刻より後の再生回数（直近1時間・24時間の判定に使用）を数える。
      */

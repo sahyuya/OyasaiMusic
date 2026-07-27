@@ -10,6 +10,7 @@ import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
+import com.github.sahyuya.oyasaiMusic.economy.PayoutResult
 
 /**
  * ⑤ 楽曲詳細画面（UI/UX設計書 6章、参照画像5枚目）。
@@ -111,20 +112,12 @@ class SongDetailScreen(
             .build()
     }
 
-    /**
-     * 「レコードを購入」（UI/UX設計書7章）: レコード素材の実アイテム(PDCで楽曲IDを紐付け)を渡し、
-     * 販売価格の8割を作者の未受取残高へ加算する。
-     *
-     * 【要確認】買い手側からの実際の代金徴収(Vault/TokenManager連携)はまだ配線していないため、
-     * 現状は「購入」を押すと代金なしでアイテムが渡り作者への還元だけが発生する暫定実装になっている。
-     * 経済プラグイン連携の実装方針が固まり次第、買い手からの引き落とし処理を追加する想定。
-     */
     private fun buyRecordItem() = GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
         .name(Component.text("レコードを購入", NamedTextColor.GOLD))
         .lore(
             Component.text("価格: ${song.price}円", NamedTextColor.GRAY),
             Component.text("クリックで購入", NamedTextColor.DARK_GRAY),
-            Component.text("(経済プラグイン連携は準備中: 現在は代金がかかりません)", NamedTextColor.DARK_GRAY),
+            Component.text("購入額の80%は収益化対象の作者へ還元されます", NamedTextColor.DARK_GRAY),
         )
         .build()
 
@@ -223,13 +216,18 @@ class SongDetailScreen(
         })
     }
 
-    /**
-     * レコードを購入する（詳細は [buyRecordItem] のコメント参照）。
-     * Vault未連携のため、現状は買い手からの引き落としは行わず、アイテム付与と
-     * 作者への還元(価格の8割をpending_moneyへ加算)のみ行う。
-     */
     private fun buyRecord() {
         val songId = song.id ?: return
+        val payment = plugin.economyService.withdraw(viewer, song.price.toLong())
+        if (payment !is PayoutResult.Success) {
+            val reason = when (payment) {
+                is PayoutResult.Unavailable -> payment.reason
+                is PayoutResult.Failed -> payment.reason
+                PayoutResult.Success -> ""
+            }
+            viewer.sendMessage("§c購入できませんでした: $reason")
+            return
+        }
         val material = Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13
         val authorName = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
         val item = com.github.sahyuya.oyasaiMusic.PhysicalRecordItem.create(plugin, material, songId, song.title, authorName)
@@ -245,7 +243,7 @@ class SongDetailScreen(
             }
         })
         viewer.sendMessage("§aレコードを受け取りました: ${song.title}")
-        viewer.sendMessage("§7(経済プラグイン連携は準備中のため、現在は代金がかかりません)")
+        viewer.sendMessage("§7${song.price}円を支払いました。")
         viewer.sendMessage("§7Shift+右クリックで環境BGM設定（再生範囲/トリガー/ループ）を変更できます。")
     }
 

@@ -41,7 +41,7 @@ class PlayerHeadListMenu(
 
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, actionModeCategory = null)
+        GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
 
         currentPageUuids().forEachIndexed { index, uuid ->
             val name = Bukkit.getOfflinePlayer(uuid).name ?: uuid.toString().take(8)

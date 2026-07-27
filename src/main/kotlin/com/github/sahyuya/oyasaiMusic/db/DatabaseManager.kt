@@ -81,7 +81,8 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                         views           INTEGER NOT NULL DEFAULT 0,
                         file_name       TEXT NOT NULL,
                         supports_positional INTEGER NOT NULL DEFAULT 0,
-                        published       INTEGER NOT NULL DEFAULT 0
+                        published       INTEGER NOT NULL DEFAULT 0,
+                        review_requested_at INTEGER
                     );
                     """.trimIndent()
                 )
@@ -210,6 +211,15 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                     st.executeUpdate("ALTER TABLE songs ADD COLUMN published INTEGER NOT NULL DEFAULT 0;")
                 }
                 plugin.logger.info("DBマイグレーション: songs.published カラムを追加しました。")
+            }
+            if (!columnExists(conn, "songs", "review_requested_at")) {
+                conn.createStatement().use { st ->
+                    st.executeUpdate("ALTER TABLE songs ADD COLUMN review_requested_at INTEGER;")
+                }
+                plugin.logger.info("DBマイグレーション: songs.review_requested_at カラムを追加しました。")
+            }
+            conn.createStatement().use { st ->
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_songs_review_requested ON songs(review_requested_at);")
             }
         }
     }

@@ -24,6 +24,7 @@ import java.util.UUID
  * @param published 公開状態（GUIフェーズで追加）。作者が楽曲設定画面から任意に切替可能な
  *        独立フラグで、[status]（OP審査結果）とは別概念。falseの間は一覧・検索等に表示されない
  *        （UI/UX設計書8章「未公開（下書き）状態」に対応。既定は録音直後=false）。
+ * @param reviewRequestedAt OP審査を依頼した時刻（UNIX秒）。nullなら未依頼。
  */
 data class Song(
     val id: Long? = null,
@@ -40,6 +41,7 @@ data class Song(
     val fileName: String,
     val supportsPositional: Boolean = false,
     val published: Boolean = false,
+    val reviewRequestedAt: Long? = null,
 ) {
     /**
      * 収益化（視聴ポイント・レコード売上）が有効かどうか。

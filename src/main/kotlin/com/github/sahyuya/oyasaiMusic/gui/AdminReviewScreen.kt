@@ -107,6 +107,7 @@ class AdminReviewScreen(
         val lore = mutableListOf(
             Component.text("作者: $authorName", NamedTextColor.GRAY),
             Component.text("公開: ${if (song.published) "公開中" else "非公開"}", NamedTextColor.GRAY),
+            Component.text("依頼: ${if (song.reviewRequestedAt != null) "あり" else "履歴のみ"}", NamedTextColor.GRAY),
             Component.text("判定: ${statusLabel(song.status)}", if (reviewed) NamedTextColor.GREEN else NamedTextColor.YELLOW),
             Component.text("左:再生 Shift+左:詳細", NamedTextColor.DARK_GRAY),
             Component.text("右:許可(循環) Shift+右:却下", NamedTextColor.DARK_GRAY),

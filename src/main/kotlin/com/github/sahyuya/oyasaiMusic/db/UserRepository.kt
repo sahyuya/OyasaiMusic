@@ -78,4 +78,21 @@ class UserRepository(private val db: DatabaseManager) {
         }
         current
     }
+
+    /**
+     * 外部経済への送金成功後に、送金済み分だけ残高から差し引く。
+     * 送金処理中に新しい報酬が加算されても、その新規分は残る。
+     */
+    fun consumePending(uuid: UUID, money: Long = 0, points: Long = 0) = db.transaction { conn ->
+        ensureRow(conn, uuid)
+        conn.prepareStatement(
+            "UPDATE users SET pending_money = MAX(0, pending_money - ?), " +
+                "pending_points = MAX(0, pending_points - ?) WHERE uuid = ?"
+        ).use { ps ->
+            ps.setLong(1, money.coerceAtLeast(0))
+            ps.setLong(2, points.coerceAtLeast(0))
+            ps.setBytes(3, UuidUtil.toBytes(uuid))
+            ps.executeUpdate()
+        }
+    }
 }

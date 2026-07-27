@@ -12,6 +12,8 @@ import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.inventory.ItemStack
+import com.github.sahyuya.oyasaiMusic.economy.PayoutResult
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * ⓪ メインメニュー（UI/UX設計書 2章、参照画像1枚目）。
@@ -32,6 +34,11 @@ class MainMenuScreen(
     private val menuManager: MenuManager,
     viewer: Player,
 ) : BaseGridMenu(viewer, Component.text("メインメニュー")) {
+
+    companion object {
+        /** 二重クリックによる二重送金を防ぐ。 */
+        private val claimsInProgress = ConcurrentHashMap.newKeySet<java.util.UUID>()
+    }
 
     private enum class RankingColumn(val slot: Int, val label: String) {
         DAILY(21, "日間"),
@@ -176,16 +183,43 @@ class MainMenuScreen(
     }
 
     private fun claimRewards() {
+        if (!claimsInProgress.add(viewer.uniqueId)) {
+            viewer.sendMessage("§7報酬を受け取り中です。")
+            return
+        }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-            val claimed = plugin.userRepository.claim(viewer.uniqueId)
+            val pending = plugin.userRepository.get(viewer.uniqueId)
             Bukkit.getScheduler().runTask(plugin, Runnable {
-                if (claimed.pendingMoney == 0L && claimed.pendingPoints == 0L) {
+                if (pending.pendingMoney == 0L && pending.pendingPoints == 0L) {
                     viewer.sendMessage("§7受け取れる報酬はありません。")
-                } else {
-                    viewer.sendMessage("§a受け取りました: §f${claimed.pendingMoney}円 / ${claimed.pendingPoints}pt")
-                    // TODO: Vault/TokenManager連携（UI/UX設計書7章）はGUIフェーズの別タスクとして接続する。
+                    claimsInProgress.remove(viewer.uniqueId)
+                    return@Runnable
                 }
+
+                val moneyResult = plugin.economyService.deposit(viewer, pending.pendingMoney)
+                val pointResult = plugin.economyService.grantPoints(viewer, pending.pendingPoints)
+                Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+                    if (moneyResult is PayoutResult.Success && pending.pendingMoney > 0) {
+                        plugin.userRepository.consumePending(viewer.uniqueId, money = pending.pendingMoney)
+                    }
+                    if (pointResult is PayoutResult.Success && pending.pendingPoints > 0) {
+                        plugin.userRepository.consumePending(viewer.uniqueId, points = pending.pendingPoints)
+                    }
+                    Bukkit.getScheduler().runTask(plugin, Runnable {
+                        val messages = mutableListOf<String>()
+                        if (pending.pendingMoney > 0) messages += if (moneyResult is PayoutResult.Success) "${pending.pendingMoney}円" else "お金: ${payoutFailure(moneyResult)}"
+                        if (pending.pendingPoints > 0) messages += if (pointResult is PayoutResult.Success) "${pending.pendingPoints}pt" else "ポイント: ${payoutFailure(pointResult)}"
+                        viewer.sendMessage("§a受取結果: §f${messages.joinToString(" / ")}")
+                        claimsInProgress.remove(viewer.uniqueId)
+                    })
+                })
             })
         })
+    }
+
+    private fun payoutFailure(result: PayoutResult): String = when (result) {
+        PayoutResult.Success -> ""
+        is PayoutResult.Unavailable -> "${result.reason}（残高は保持）"
+        is PayoutResult.Failed -> "${result.reason}（残高は保持）"
     }
 }

@@ -40,7 +40,17 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
                 Bukkit.getScheduler().runTask(plugin, Runnable { viewer.sendMessage("§c音源ファイルが見つかりません。") })
                 return@Runnable
             }
-            val audio = SongAudioFile.read(file)
+            val audio = try {
+                SongAudioFile.read(file)
+            } catch (e: Exception) {
+                plugin.logger.warning("音源ファイルの読み込みに失敗しました (${file.name}): ${e.message}")
+                Bukkit.getScheduler().runTask(plugin, Runnable { viewer.sendMessage("§c音源ファイルが壊れているか、未対応の形式です。") })
+                return@Runnable
+            }
+            if (audio.notes.isEmpty()) {
+                Bukkit.getScheduler().runTask(plugin, Runnable { viewer.sendMessage("§7この楽曲には再生できる音符がありません。") })
+                return@Runnable
+            }
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
                 // 既に再生中のセッションがあれば止める（多重再生防止）。

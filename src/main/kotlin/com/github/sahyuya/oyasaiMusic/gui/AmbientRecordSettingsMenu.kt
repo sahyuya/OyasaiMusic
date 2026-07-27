@@ -20,7 +20,7 @@ import org.bukkit.inventory.Inventory
 class AmbientRecordSettingsMenu(
     private val plugin: OyasaiMusic,
     private val menuManager: MenuManager,
-    viewer: Player,
+    override val viewer: Player,
     private val handSlot: Int,
 ) : OyasaiMenu {
 

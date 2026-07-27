@@ -51,11 +51,9 @@ class ViewCountService(
             plugin,
             Runnable {
                 val nowSeconds = System.currentTimeMillis() / 1000
-                val hourCount = socialRepository.countViewsSince(player.uniqueId, songId, nowSeconds - 3600)
-                val dayCount = socialRepository.countViewsSince(player.uniqueId, songId, nowSeconds - 86_400)
-                if (hourCount >= hourLimit || dayCount >= dayLimit) return@Runnable
-
-                socialRepository.recordView(player.uniqueId, songId, nowSeconds)
+                if (!socialRepository.tryRecordViewWithinLimits(player.uniqueId, songId, nowSeconds, hourLimit, dayLimit)) {
+                    return@Runnable
+                }
                 val newTotalViews = songRepository.incrementViews(songId, 1)
 
                 if (song.isMonetizationEligible() && viewsPerPoint > 0 && newTotalViews % viewsPerPoint == 0L) {

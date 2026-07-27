@@ -273,11 +273,16 @@ class SongSettingsScreen(
     }
 
     private fun submitForReview() {
-        viewer.sendMessage("§aOPへ審査依頼を送信しました: ${song.title}")
-        val notice = "§d[OyasaiMusic] §f${viewer.name} が「${song.title}」の審査を依頼しました。(楽曲ID: ${song.id})"
-        Bukkit.getOnlinePlayers().filter { it.hasPermission("oyasaimusic.admin") }.forEach { it.sendMessage(notice) }
-        // TODO: 審査キュー(未審査/審査済)を管理するテーブルが無いため、現状はチャット通知のみ。
-        // OP審査・履歴管理GUIの実装時に、依頼日時等を保持する専用カラム/テーブルの追加を検討する。
+        val songId = song.id ?: return
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+            plugin.songRepository.requestReview(songId)
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                viewer.sendMessage("§aOPへ審査依頼を送信しました: ${song.title}")
+                val notice = "§d[OyasaiMusic] §f${viewer.name} が「${song.title}」の審査を依頼しました。(楽曲ID: $songId)"
+                Bukkit.getOnlinePlayers().filter { it.hasPermission("oyasaimusic.admin") }.forEach { it.sendMessage(notice) }
+                reloadAndReopen(null)
+            })
+        })
     }
 
     private fun handleDeleteClick() {
