@@ -15,15 +15,16 @@ import java.io.File
  * ⑦ 楽曲設定画面（作者・OP専用、UI/UX設計書 8章、参照画像7枚目）。
  * 設定可能項目: 公開、題名、BPM、レコードの種類、レコード価格、参考URL、オリジナル審査提出、楽曲削除。
  *
- * 【スロット配置（サヒュヤ氏の指示＋参照画像から確定/推定）】
+ * 【スロット配置】
  *   slot11: 現在のレコードのプレビュー（クリックで再生）
- *   slot12: オリジナル審査提出　※参照画像では扉アイコンに見えたが、8設定項目に合わせてここへ割当（要確認）
+ *   slot12: 公開切替（トグル。ライム/グレー染料）
+ *   slot14: 参考URLを設定（本、Book-and-Quill入力）
+ *   slot15: オリジナル審査を提出（OPへ通知＋[com.github.sahyuya.oyasaiMusic.db.SongRepository.requestReview]で
+ *           審査キューに登録され、OP専用「審査・履歴管理GUI」([AdminReviewScreen])に表示される）
  *   slot20: 題名（サイン、Anvil入力）
  *   slot21: BPM（ロケット花火、Anvil数値入力）
  *   slot22: レコードの種類（クリックで循環）
  *   slot23: レコード価格（エメラルド、Anvil数値入力）
- *   slot24: 参考URL（本、Book-and-Quill入力）
- *   slot25: 公開切替（トグル。下記TODO参照）
  *   slot37: 戻る（矢、サヒュヤ氏指定の座標(1,4)＝コンテンツ領域左下）
  *   slot44: 楽曲削除（TNT、2回クリックで確定）
  *
@@ -118,7 +119,7 @@ class SongSettingsScreen(
         .name(Component.text("オリジナル審査を提出", NamedTextColor.LIGHT_PURPLE))
         .lore(
             Component.text("クリックでOPへ審査依頼を通知します", NamedTextColor.GRAY),
-            Component.text("(現状: 審査キューは未実装のためチャット通知のみ)", NamedTextColor.DARK_GRAY),
+            Component.text("結果は「審査・履歴管理GUI」で確認できます", NamedTextColor.DARK_GRAY),
         )
         .build()
 

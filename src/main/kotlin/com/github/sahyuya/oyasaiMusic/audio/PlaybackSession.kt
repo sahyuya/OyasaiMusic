@@ -25,11 +25,8 @@ class PlaybackSession(
     val isAmbientPlayback: Boolean = false,
 ) {
     val recipients: MutableSet<UUID> = CopyOnWriteArraySet(initialRecipients.map { it.uniqueId })
-    /** [PlaybackMode.DEFAULT]用アンカーの解放対象。開始時点のリスナー一覧を保持しておく。 */
-    internal val initialRecipientUuids: List<UUID> = initialRecipients.map { it.uniqueId }
     internal val scheduledTasks: MutableList<ScheduledFuture<*>> = mutableListOf()
     private val cancelled = AtomicBoolean(false)
-    private val anchorsReleased = AtomicBoolean(false)
 
     val isCancelled: Boolean get() = cancelled.get()
 
@@ -55,9 +52,6 @@ class PlaybackSession(
         segmentStartMillis = System.currentTimeMillis()
         isPaused = false
     }
-
-    /** [HeadAnchorManager] への release() が既に行われたかどうかを判定し、未実施なら実施済みにする。 */
-    internal fun tryMarkAnchorsReleased(): Boolean = anchorsReleased.compareAndSet(false, true)
 
     fun cancel() {
         if (cancelled.compareAndSet(false, true)) {

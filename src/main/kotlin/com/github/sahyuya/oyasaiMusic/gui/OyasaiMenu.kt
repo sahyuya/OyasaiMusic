@@ -16,9 +16,8 @@ import org.bukkit.inventory.InventoryHolder
  * 実装クラスは [GuiChrome.render] を呼び、左列ナビゲーション(slot 0,9,18,27,36)と
  * 下段メディアコントローラー(slot 45〜53)を必ず描画すること。
  * コンテンツ領域は5×8=40スロット（各行の1〜8列目, slot 1-8,10-17,19-26,28-35,37-44）。
- * 参照画像では一貫して先頭行(slot 1-8)が空欄だったため、一覧系画面では
- * [com.github.sahyuya.oyasaiMusic.gui.screens.SongListMenu.LIST_SLOTS] のように
- * 残り4行(32スロット)のみを使う運用にしている（詳細は本文の質問事項を参照）。
+ * 一覧系画面では [com.github.sahyuya.oyasaiMusic.gui.SongListMenu.LIST_SLOTS] や
+ * [ContentGrid.SLOTS] の通り、この5×8=40スロット全体をコンテンツ表示に使う運用にしている。
  */
 interface OyasaiMenu {
 

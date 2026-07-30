@@ -8,7 +8,12 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** ランキング表示1件分（キャッシュJSONにもそのまま保存される）。 */
+/**
+ * ランキング表示1件分（キャッシュJSONにもそのまま保存される）。
+ * @param recordMaterial 楽曲ランキングのみ設定される（バニラのレコード素材名）。
+ *        フォロワーランキング(FOLLOWERS)はnull。メインメニューのアイコン表示に使う
+ *        （GUIフェーズで追加: 以前は楽曲アイコンが常に汎用ディスクだったため）。
+ */
 data class RankingEntryDto(
     val rank: Int,
     val songId: Long?,
@@ -16,6 +21,7 @@ data class RankingEntryDto(
     val authorUuid: String,
     val authorName: String,
     val score: Long,
+    val recordMaterial: String? = null,
 )
 
 /** ある期間(日間/週間/総合)における、4指標分のランキングスナップショット。 */
@@ -153,7 +159,15 @@ class RankingCacheService(private val plugin: OyasaiMusic, private val rankingRe
             } else {
                 rankingRepository.topSongsInRange(metric, since, until, limit = 7).mapIndexed { i, s ->
                     val name = Bukkit.getOfflinePlayer(s.song.authorUuid).name ?: "unknown"
-                    RankingEntryDto(rank = i + 1, songId = s.song.id, title = s.song.title, authorUuid = s.song.authorUuid.toString(), authorName = name, score = s.score)
+                    RankingEntryDto(
+                        rank = i + 1,
+                        songId = s.song.id,
+                        title = s.song.title,
+                        authorUuid = s.song.authorUuid.toString(),
+                        authorName = name,
+                        score = s.score,
+                        recordMaterial = s.song.recordMaterial,
+                    )
                 }
             }
         }

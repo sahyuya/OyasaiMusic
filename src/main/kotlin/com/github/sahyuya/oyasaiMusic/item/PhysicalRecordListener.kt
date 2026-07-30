@@ -1,5 +1,6 @@
-package com.github.sahyuya.oyasaiMusic
+package com.github.sahyuya.oyasaiMusic.item
 
+import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.gui.AmbientRecordSettingsMenu
 import org.bukkit.GameMode
 import org.bukkit.Material

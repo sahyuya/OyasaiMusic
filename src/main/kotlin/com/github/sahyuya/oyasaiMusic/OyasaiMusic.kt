@@ -25,6 +25,8 @@ import com.github.sahyuya.oyasaiMusic.economy.EconomyService
 import com.github.sahyuya.oyasaiMusic.gui.MenuManager
 import com.github.sahyuya.oyasaiMusic.gui.PlaybackController
 import com.github.sahyuya.oyasaiMusic.gui.PlayerControllerStateService
+import com.github.sahyuya.oyasaiMusic.item.PhysicalMusicPlayerItem
+import com.github.sahyuya.oyasaiMusic.item.PhysicalRecordListener
 import org.bukkit.Bukkit
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File

@@ -2,9 +2,9 @@ package com.github.sahyuya.oyasaiMusic.command
 
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
+import com.github.sahyuya.oyasaiMusic.audio.PlaybackSession
 import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.db.SongRepository
-import com.github.sahyuya.oyasaiMusic.model.Song
 import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
@@ -13,6 +13,8 @@ import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
 import org.bukkit.plugin.Plugin
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * `/playtest` デバッグコマンド（一時的に本機能としては使わない）。
@@ -27,6 +29,9 @@ class PlaytestCommand(
     private val playbackEngine: PlaybackEngine,
     private val audioDirectory: File,
 ) : CommandExecutor, TabCompleter {
+
+    /** このコマンド経由で再生中のセッションをプレイヤーごとに追跡する（/playtest stop 用）。 */
+    private val activeSessions = ConcurrentHashMap<UUID, PlaybackSession>()
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (sender !is Player) {
@@ -90,6 +95,8 @@ class PlaytestCommand(
 
                 val audioData = SongAudioFile.read(audioFile)
                 Bukkit.getScheduler().runTask(plugin, Runnable {
+                    // 既にこのコマンドで再生中のセッションがあれば先に止める（多重再生防止）。
+                    activeSessions.remove(player.uniqueId)?.let { playbackEngine.stop(it) }
                     val session = playbackEngine.play(
                         song = song,
                         notes = audioData.notes,
@@ -97,7 +104,9 @@ class PlaytestCommand(
                         playbackBpm = song.bpm,
                         isAmbientPlayback = false,
                         mode = mode,
+                        onCompletion = { activeSessions.remove(player.uniqueId) },
                     )
+                    activeSessions[player.uniqueId] = session
                     player.sendMessage("§a再生開始: §f${song.title}§a（§f${audioData.notes.size}§a音符、${audioData.totalDurationMs}ms）")
                 })
             } catch (e: Exception) {
@@ -110,7 +119,13 @@ class PlaytestCommand(
     }
 
     private fun handleStop(player: Player) {
-        player.sendMessage("§e再生停止機能は現在未実装です（セッション管理が必要）。")
+        val session = activeSessions.remove(player.uniqueId)
+        if (session == null) {
+            player.sendMessage("§7再生中の曲はありません。")
+            return
+        }
+        playbackEngine.stop(session)
+        player.sendMessage("§a再生を停止しました。")
     }
 
     private fun sendUsage(sender: CommandSender) {
@@ -118,7 +133,7 @@ class PlaytestCommand(
             listOf(
                 "§e--- OyasaiMusic /playtest (デバッグ) ---",
                 "§7/playtest <楽曲ID> <default/positional>  §f指定楽曲を再生（再生方式オプション）",
-                "§7/playtest stop                                   §f再生中の楽曲を停止（未実装）",
+                "§7/playtest stop                                   §f再生中の楽曲を停止",
             ).joinToString("\n")
         )
     }

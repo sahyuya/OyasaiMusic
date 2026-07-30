@@ -184,10 +184,10 @@ class SongListMenu(
      * （UI/UX設計書6章「全楽曲一覧/検索結果: 1曲で停止。ただしシャッフルON時はリスト内から
      * ランダムに自動再生を継続。」に準拠）。
      *   - シャッフルOFF・ループOFF: 1曲で停止（従来通り）
-     *   - シャッフルON: 再生完了ごとに、現在表示中のページ内(公開楽曲のみ)からランダムな1曲へ進む
+     *   - シャッフルON: 再生完了ごとに、サーバー全体の公開楽曲からランダムな1曲へ進む
+     *     （[com.github.sahyuya.oyasaiMusic.db.SongRepository.randomPublished] を使用。
+     *     以前は表示中のページ(最大40件)内からしか選出できなかった制限を解消した）。
      *   - シャッフルOFF・ループ=1曲: 同じ曲を繰り返す
-     * ページ内からのランダム選出という簡易実装のため、他ページの楽曲までは対象にならない
-     * （要確認: 全件対象にする場合はDB側のランダム抽出クエリが別途必要）。
      */
     private fun playSong(song: Song) {
         plugin.playbackController.play(viewer, song, onCompletion = { handleAutoAdvance(song) })
@@ -197,13 +197,22 @@ class SongListMenu(
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         when {
             state.loopMode == LoopMode.SINGLE -> playSong(justFinished)
-            state.shuffle -> {
-                val candidates = pageSongs.filter { it.published && it.id != justFinished.id }
-                    .ifEmpty { pageSongs.filter { it.published } }
-                val next = candidates.randomOrNull() ?: return
-                playSong(next)
-            }
+            state.shuffle -> playRandomSong(justFinished)
             else -> {} // シャッフルOFF・ループOFF(またはLIST): 単曲再生のみ（設計書6章）
         }
+    }
+
+    private fun playRandomSong(justFinished: Song) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+            val next = plugin.songRepository.randomPublished(excludeId = justFinished.id)
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                if (next != null) {
+                    playSong(next)
+                } else {
+                    // 公開楽曲がこの1曲しか無い等のフォールバック: 同じ曲を再度再生する。
+                    playSong(justFinished)
+                }
+            })
+        })
     }
 }

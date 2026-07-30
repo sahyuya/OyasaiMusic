@@ -206,6 +206,16 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
      */
     private fun migrateSchema() {
         transaction { conn ->
+            // 【修正】supports_positional は published / review_requested_at と同時期に
+            // 追加されたカラムだが、このマイグレーション処理には含まれていなかった。
+            // それより前に作成されたDBでは INSERT/SELECT が
+            // 「no such column: supports_positional」で失敗し得るため追加した。
+            if (!columnExists(conn, "songs", "supports_positional")) {
+                conn.createStatement().use { st ->
+                    st.executeUpdate("ALTER TABLE songs ADD COLUMN supports_positional INTEGER NOT NULL DEFAULT 0;")
+                }
+                plugin.logger.info("DBマイグレーション: songs.supports_positional カラムを追加しました。")
+            }
             if (!columnExists(conn, "songs", "published")) {
                 conn.createStatement().use { st ->
                     st.executeUpdate("ALTER TABLE songs ADD COLUMN published INTEGER NOT NULL DEFAULT 0;")

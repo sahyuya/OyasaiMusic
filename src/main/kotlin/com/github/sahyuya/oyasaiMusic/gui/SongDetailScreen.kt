@@ -1,6 +1,7 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
+import com.github.sahyuya.oyasaiMusic.item.PhysicalRecordItem
 import com.github.sahyuya.oyasaiMusic.util.HeadTextureUtil
 import com.github.sahyuya.oyasaiMusic.model.Song
 import net.kyori.adventure.text.Component
@@ -230,7 +231,7 @@ class SongDetailScreen(
         }
         val material = Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13
         val authorName = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
-        val item = com.github.sahyuya.oyasaiMusic.PhysicalRecordItem.create(plugin, material, songId, song.title, authorName)
+        val item = PhysicalRecordItem.create(plugin, material, songId, song.title, authorName)
         val leftover = viewer.inventory.addItem(item)
         if (leftover.isNotEmpty()) {
             viewer.world.dropItemNaturally(viewer.location, item)

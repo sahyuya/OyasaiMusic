@@ -91,6 +91,26 @@ class SongRepository(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * シャッフル再生用: 公開楽曲からランダムに1曲取得する（GUIフェーズで追加）。
+     * 以前は [com.github.sahyuya.oyasaiMusic.gui.SongListMenu] が表示中のページ(最大40件)
+     * 内からしかランダム選出できなかった制限に対応し、サーバー全体の公開楽曲を対象にする。
+     *
+     * @param excludeId 直前に再生していた曲を除外したい場合に指定する（公開楽曲が1曲しか
+     *        無い場合など、除外しきれず同じ曲が返ることがある）。
+     */
+    fun randomPublished(excludeId: Long? = null): Song? = db.transaction { conn ->
+        val sql = if (excludeId != null) {
+            "SELECT * FROM songs WHERE published = 1 AND id != ? ORDER BY RANDOM() LIMIT 1"
+        } else {
+            "SELECT * FROM songs WHERE published = 1 ORDER BY RANDOM() LIMIT 1"
+        }
+        conn.prepareStatement(sql).use { ps ->
+            if (excludeId != null) ps.setLong(1, excludeId)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.toSong() else null }
+        }
+    }
+
     /** GUIフェーズで追加: OP専用「審査・履歴管理GUI」用の全楽曲一覧（公開/非公開を問わず全件対象）。 */
     fun listForReview(sort: ReviewSort, limit: Int, offset: Int): List<Song> = db.transaction { conn ->
         // 審査依頼済み、または既に判定履歴を持つ楽曲だけを対象にする。

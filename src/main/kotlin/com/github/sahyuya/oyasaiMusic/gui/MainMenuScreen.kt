@@ -134,10 +134,8 @@ class MainMenuScreen(
 
         val name = Component.text("${column.label}ランキング ($metricLabel)", NamedTextColor.GOLD)
 
-        // フォロワーランキングは1位作者のプレイヤーヘッドを、それ以外は汎用ディスクをアイコンにする。
-        // NOTE: RankingEntryDtoにレコード素材(recordMaterial)を持たせていないため、
-        // 楽曲系ランキングのアイコンは1位の実際のレコード種類ではなく汎用ディスクで代替している
-        // （見た目を実際のレコード種類に合わせたい場合はDTOの拡張が必要）。
+        // フォロワーランキングは1位作者のプレイヤーヘッドを、それ以外は1位の楽曲のレコード種類を
+        // アイコンにする（recordMaterialが取得できない古いキャッシュ等では汎用ディスクにフォールバック）。
         if (metric == RankingMetric.FOLLOWERS) {
             val topAuthorUuid = entries.firstOrNull()?.let { runCatching { java.util.UUID.fromString(it.authorUuid) }.getOrNull() }
             val head = if (topAuthorUuid != null) {
@@ -152,7 +150,10 @@ class MainMenuScreen(
             return head
         }
 
-        return GuiItemBuilder(if (entries.isEmpty()) Material.ITEM_FRAME else Material.MUSIC_DISC_13)
+        val icon = entries.firstOrNull()?.recordMaterial?.let { Material.matchMaterial(it) }
+            ?: if (entries.isEmpty()) Material.ITEM_FRAME else Material.MUSIC_DISC_13
+
+        return GuiItemBuilder(icon)
             .name(name)
             .lore(lore)
             .build()

@@ -1,8 +1,8 @@
 package com.github.sahyuya.oyasaiMusic.audio
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
-import com.github.sahyuya.oyasaiMusic.AmbientRange
-import com.github.sahyuya.oyasaiMusic.AmbientTrigger
+import com.github.sahyuya.oyasaiMusic.item.AmbientRange
+import com.github.sahyuya.oyasaiMusic.item.AmbientTrigger
 import com.github.sahyuya.oyasaiMusic.model.Song
 import org.bukkit.Location
 import org.bukkit.entity.Player

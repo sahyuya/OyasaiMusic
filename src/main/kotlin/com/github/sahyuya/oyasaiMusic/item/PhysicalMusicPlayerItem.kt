@@ -1,5 +1,6 @@
-package com.github.sahyuya.oyasaiMusic
+package com.github.sahyuya.oyasaiMusic.item
 
+import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.gui.MenuManager
 import com.github.sahyuya.oyasaiMusic.gui.MainMenuScreen
 import net.kyori.adventure.text.Component

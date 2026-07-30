@@ -1,7 +1,7 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
-import com.github.sahyuya.oyasaiMusic.PhysicalRecordItem
+import com.github.sahyuya.oyasaiMusic.item.PhysicalRecordItem
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit

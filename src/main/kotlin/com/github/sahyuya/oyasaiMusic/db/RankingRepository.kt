@@ -16,7 +16,7 @@ data class SongRanking(val song: Song, val score: Long)
 data class AuthorRanking(val authorUuid: UUID, val score: Long)
 
 /**
- * メインメニュー「①ランキング」用の集計クエリ（UI/UX設計書 2章、サヒュヤ氏の指示に基づき更新）。
+ * メインメニュー「①ランキング」用の集計クエリ（UI/UX設計書2章、サヒュヤ氏の指示に基づき更新）。
  *
  * このクラス自体は任意の期間(sinceEpochSec〜untilEpochSec、両方null=全期間)でDB集計を行うだけで、
  * 「日間は毎日0時に前日分を集計してJSONにキャッシュ」「週間は毎週月曜0時に前週分を集計」
