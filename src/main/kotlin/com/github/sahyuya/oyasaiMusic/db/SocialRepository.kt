@@ -26,6 +26,47 @@ class SocialRepository(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * いいね登録・曲の統計・双方の報酬残高を一括で更新する。
+     * UNIQUE制約により重複いいねの場合は、以降の更新を一切行わない。
+     */
+    fun registerLikeWithRewards(
+        likerUuid: UUID,
+        authorUuid: UUID,
+        songId: Long,
+        likerMoneyReward: Long,
+        authorPointReward: Long,
+    ): Boolean = db.transaction { conn ->
+        val added = conn.prepareStatement(
+            "INSERT INTO song_likes (user_uuid, song_id, created_at) VALUES (?, ?, ?) " +
+                "ON CONFLICT(user_uuid, song_id) DO NOTHING"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(likerUuid))
+            ps.setLong(2, songId)
+            ps.setLong(3, System.currentTimeMillis() / 1000)
+            ps.executeUpdate() > 0
+        }
+        if (!added) return@transaction false
+
+        conn.prepareStatement("UPDATE songs SET likes = likes + 1 WHERE id = ?").use { ps ->
+            ps.setLong(1, songId)
+            ps.executeUpdate()
+        }
+        ensureUser(conn, likerUuid)
+        ensureUser(conn, authorUuid)
+        conn.prepareStatement("UPDATE users SET pending_money = pending_money + ? WHERE uuid = ?").use { ps ->
+            ps.setLong(1, likerMoneyReward)
+            ps.setBytes(2, UuidUtil.toBytes(likerUuid))
+            ps.executeUpdate()
+        }
+        conn.prepareStatement("UPDATE users SET pending_points = pending_points + ? WHERE uuid = ?").use { ps ->
+            ps.setLong(1, authorPointReward)
+            ps.setBytes(2, UuidUtil.toBytes(authorUuid))
+            ps.executeUpdate()
+        }
+        true
+    }
+
     fun hasLiked(userUuid: UUID, songId: Long): Boolean = db.transaction { conn ->
         conn.prepareStatement("SELECT 1 FROM song_likes WHERE user_uuid = ? AND song_id = ?").use { ps ->
             ps.setBytes(1, UuidUtil.toBytes(userUuid))
@@ -169,6 +210,61 @@ class SocialRepository(private val db: DatabaseManager) {
             ps.executeUpdate()
         }
         true
+    }
+
+    /**
+     * 視聴履歴・総再生数・条件付きポイント報酬を一つのトランザクションで更新する。
+     * @return true のときだけ視聴として計上された。
+     */
+    fun registerQualifiedView(
+        listenerUuid: UUID,
+        authorUuid: UUID,
+        songId: Long,
+        timestamp: Long,
+        hourLimit: Int,
+        dayLimit: Int,
+        monetizationEligible: Boolean,
+        viewsPerPoint: Int,
+    ): Boolean = db.transaction { conn ->
+        val uuidBytes = UuidUtil.toBytes(listenerUuid)
+        fun countSince(since: Long): Long = conn.prepareStatement(
+            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ? AND timestamp >= ?"
+        ).use { ps ->
+            ps.setBytes(1, uuidBytes)
+            ps.setLong(2, songId)
+            ps.setLong(3, since)
+            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
+        }
+        if (countSince(timestamp - 3600) >= hourLimit || countSince(timestamp - 86_400) >= dayLimit) {
+            return@transaction false
+        }
+        conn.prepareStatement("INSERT INTO view_history (user_uuid, song_id, timestamp) VALUES (?, ?, ?)").use { ps ->
+            ps.setBytes(1, uuidBytes)
+            ps.setLong(2, songId)
+            ps.setLong(3, timestamp)
+            ps.executeUpdate()
+        }
+        val totalViews = conn.prepareStatement("UPDATE songs SET views = views + 1 WHERE id = ? RETURNING views").use { ps ->
+            ps.setLong(1, songId)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else return@transaction false }
+        }
+        if (monetizationEligible && viewsPerPoint > 0 && totalViews % viewsPerPoint == 0L) {
+            ensureUser(conn, authorUuid)
+            conn.prepareStatement("UPDATE users SET pending_points = pending_points + 1 WHERE uuid = ?").use { ps ->
+                ps.setBytes(1, UuidUtil.toBytes(authorUuid))
+                ps.executeUpdate()
+            }
+        }
+        true
+    }
+
+    private fun ensureUser(conn: java.sql.Connection, uuid: UUID) {
+        conn.prepareStatement(
+            "INSERT INTO users (uuid, pending_money, pending_points) VALUES (?, 0, 0) ON CONFLICT(uuid) DO NOTHING"
+        ).use { ps ->
+            ps.setBytes(1, UuidUtil.toBytes(uuid))
+            ps.executeUpdate()
+        }
     }
 
     /**

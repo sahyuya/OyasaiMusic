@@ -5,6 +5,7 @@ import com.github.sahyuya.oyasaiMusic.item.AmbientRange
 import com.github.sahyuya.oyasaiMusic.item.AmbientTrigger
 import com.github.sahyuya.oyasaiMusic.model.Song
 import org.bukkit.Location
+import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -31,6 +32,12 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
         val trigger: AmbientTrigger,
         val loop: Boolean,
         var session: PlaybackSession? = null,
+        /** 音源読み込み中の二重起動を防ぐ。状態変更はメインスレッド上で行う。 */
+        var loading: Boolean = false,
+        /** 現在トリガーが再生を許可しているか。 */
+        var enabled: Boolean = trigger == AmbientTrigger.JUKEBOX,
+        /** 非ループ曲が最後まで鳴り終えたか。トリガー再投入まで再生し直さない。 */
+        var completed: Boolean = false,
     )
 
     private val entries = ConcurrentHashMap<String, AmbientEntry>()
@@ -58,6 +65,8 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
         val k = key(location)
         val entry = entries[k] ?: return
         if (entry.trigger != AmbientTrigger.REDSTONE) return
+        entry.enabled = powered
+        entry.completed = false
         if (powered) startPlayback(k) else stopPlayback(k)
     }
 
@@ -67,8 +76,16 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
             val nearby = nearbyPlayers(entry)
 
             if (entry.trigger == AmbientTrigger.PROXIMITY) {
-                if (nearby.isNotEmpty() && entry.session == null) startPlayback(k)
-                if (nearby.isEmpty() && entry.session != null) stopPlayback(k)
+                val shouldPlay = nearby.isNotEmpty()
+                if (entry.enabled != shouldPlay) {
+                    entry.enabled = shouldPlay
+                    entry.completed = false
+                    if (!shouldPlay) stopPlayback(k)
+                }
+            }
+
+            if (entry.enabled && entry.session == null && !entry.loading && !(entry.completed && !entry.loop)) {
+                startPlayback(k)
             }
 
             val session = entry.session ?: return@forEach
@@ -92,22 +109,46 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
 
     private fun startPlayback(key: String) {
         val entry = entries[key] ?: return
-        if (entry.session != null) return
+        if (!entry.enabled || entry.session != null || entry.loading || (entry.completed && !entry.loop)) return
+        // リスナーがいない状態で空セッションを作ると、再生完了コールバックが発火せず
+        // 後から範囲へ入ったプレイヤーに再生できなくなるため、入場を待つ。
+        if (nearbyPlayers(entry).isEmpty()) return
         val file = File(plugin.audioDirectory, entry.song.fileName)
-        if (!file.exists()) return
-        val audio = SongAudioFile.read(file)
-        val recipients = nearbyPlayers(entry)
-        val session = plugin.playbackEngine.play(
-            song = entry.song,
-            notes = audio.notes,
-            recipients = recipients,
-            isAmbientPlayback = true,
-            onCompletion = {
-                entry.session = null
-                if (entry.loop) startPlayback(key)
-            },
-        )
-        entry.session = session
+        if (!file.exists()) {
+            plugin.logger.warning("環境BGMの音源ファイルが見つかりません: ${file.name}")
+            entry.completed = true
+            return
+        }
+        entry.loading = true
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+            val audio = runCatching { SongAudioFile.read(file) }
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                entry.loading = false
+                // 読み込み中に撤去・差し替え・停止された場合は、古い結果を利用しない。
+                if (entries[key] !== entry || !entry.enabled || entry.session != null) return@Runnable
+                val loaded = audio.getOrElse {
+                    plugin.logger.warning("環境BGMの音源読み込みに失敗しました (${file.name}): ${it.message}")
+                    entry.completed = true
+                    return@Runnable
+                }
+                if (loaded.notes.isEmpty()) {
+                    entry.completed = true
+                    return@Runnable
+                }
+                val session = plugin.playbackEngine.play(
+                    song = entry.song,
+                    notes = loaded.notes,
+                    recipients = nearbyPlayers(entry),
+                    isAmbientPlayback = true,
+                    onCompletion = {
+                        entry.session = null
+                        entry.completed = !entry.loop
+                        if (entry.loop && entry.enabled) startPlayback(key)
+                    },
+                )
+                entry.session = session
+            })
+        })
     }
 
     private fun stopPlayback(key: String) {

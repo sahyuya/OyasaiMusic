@@ -111,7 +111,7 @@ class PlaylistDetailScreen private constructor(
         }
 
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
-            .name(Component.text(song.title, NamedTextColor.WHITE))
+            .name(songTitle(song))
             .lore(lore)
             .glint(confirming || dragging || nowPlaying)
             .build()

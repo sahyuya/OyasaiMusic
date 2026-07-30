@@ -115,7 +115,7 @@ class AdminReviewScreen(
         if (confirming) lore += Component.text("もう一度Shift+右クリックで却下確定", NamedTextColor.RED)
 
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
-            .name(Component.text(song.title, NamedTextColor.WHITE))
+            .name(songTitle(song))
             .lore(lore)
             .glint(reviewed)
             .build()

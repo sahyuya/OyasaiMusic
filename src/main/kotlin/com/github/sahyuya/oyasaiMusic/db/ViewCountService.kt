@@ -27,8 +27,6 @@ import org.bukkit.plugin.Plugin
  */
 class ViewCountService(
     private val plugin: Plugin,
-    private val songRepository: SongRepository,
-    private val userRepository: UserRepository,
     private val socialRepository: SocialRepository,
     private val hourLimit: Int,
     private val dayLimit: Int,
@@ -51,14 +49,17 @@ class ViewCountService(
             plugin,
             Runnable {
                 val nowSeconds = System.currentTimeMillis() / 1000
-                if (!socialRepository.tryRecordViewWithinLimits(player.uniqueId, songId, nowSeconds, hourLimit, dayLimit)) {
-                    return@Runnable
-                }
-                val newTotalViews = songRepository.incrementViews(songId, 1)
-
-                if (song.isMonetizationEligible() && viewsPerPoint > 0 && newTotalViews % viewsPerPoint == 0L) {
-                    userRepository.addPending(song.authorUuid, points = 1)
-                }
+                if (!socialRepository.registerQualifiedView(
+                        listenerUuid = player.uniqueId,
+                        authorUuid = song.authorUuid,
+                        songId = songId,
+                        timestamp = nowSeconds,
+                        hourLimit = hourLimit,
+                        dayLimit = dayLimit,
+                        monetizationEligible = song.isMonetizationEligible(),
+                        viewsPerPoint = viewsPerPoint,
+                    )
+                ) return@Runnable
 
                 if (onRegistered != null) {
                     Bukkit.getScheduler().runTask(plugin, Runnable { onRegistered() })

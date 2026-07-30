@@ -78,6 +78,12 @@ data class PlayerControllerState(
     var isPlaying: Boolean = false,
     var loopMode: LoopMode = LoopMode.OFF,
     var shuffle: Boolean = false,
+    /**
+     * プレイリスト以外（一覧・詳細・コマンド試聴）から開始した曲にも前後移動を提供するための
+     * プレイヤー単位の試聴履歴。現在位置より後ろは、新しい曲を選んだ時点で破棄する。
+     */
+    val listeningHistory: MutableList<Song> = mutableListOf(),
+    var listeningHistoryIndex: Int = -1,
 )
 
 /** [PlayerControllerState] をプレイヤーごとに保持する簡易ストア。 */
@@ -122,7 +128,7 @@ object GuiChrome {
         val actionModeLore = if (actionModeCategory != null) {
             val current = BedrockActionModeService.get(viewer.uniqueId, actionModeCategory)
             listOf(
-                Component.text("現在: モード${current.displayIndex}", NamedTextColor.AQUA),
+                Component.text("現在: ${current.displayName}", NamedTextColor.AQUA),
                 Component.text("クリックで切替", NamedTextColor.DARK_GRAY),
             )
         } else {
@@ -186,10 +192,12 @@ object GuiChrome {
         inventory.setItem(ControllerSlots.PAGE_PREV, GuiItemBuilder(Material.RED_DYE).name(Component.text("前のページ", NamedTextColor.RED)).build())
         inventory.setItem(ControllerSlots.PAGE_NEXT, GuiItemBuilder(Material.LIME_DYE).name(Component.text("次のページ", NamedTextColor.GREEN)).build())
 
+        val nowPlayingName = state.nowPlayingSong?.let { songTitle(it, NamedTextColor.AQUA) }
+            ?: Component.text("再生中の曲はありません", NamedTextColor.AQUA)
         inventory.setItem(
             ControllerSlots.NOW_PLAYING,
             GuiItemBuilder(state.nowPlayingSong?.let { Material.matchMaterial(it.recordMaterial) } ?: Material.MUSIC_DISC_13)
-                .name(Component.text(state.nowPlayingSong?.title ?: "再生中の曲はありません", NamedTextColor.AQUA))
+                .name(nowPlayingName)
                 .lore(Component.text("クリックで詳細を開く", NamedTextColor.GRAY))
                 .glint(state.isPlaying)
                 .build(),

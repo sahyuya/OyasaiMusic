@@ -21,7 +21,7 @@ object AuthorStatsCache {
     private val loading = ConcurrentHashMap.newKeySet<UUID>()
 
     /** キャッシュ済みの値を即座に返す（無ければnull）。裏で非同期に最新値を取得し直す。 */
-    fun get(plugin: OyasaiMusic, playerUuid: UUID): Stats? {
+    fun get(plugin: OyasaiMusic, playerUuid: UUID, onLoaded: (() -> Unit)? = null): Stats? {
         if (loading.add(playerUuid)) {
             Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
                 try {
@@ -31,6 +31,7 @@ object AuthorStatsCache {
                     val totalFavorites = plugin.socialRepository.countFavoritesForAuthor(playerUuid)
                     val totalFollowers = plugin.socialRepository.countFollowers(playerUuid)
                     cache[playerUuid] = Stats(totalLikes, totalFavorites, totalViews, totalFollowers)
+                    onLoaded?.let { Bukkit.getScheduler().runTask(plugin, Runnable { it() }) }
                 } finally {
                     loading.remove(playerUuid)
                 }

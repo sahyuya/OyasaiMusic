@@ -8,8 +8,7 @@ import com.github.sahyuya.oyasaiMusic.audio.PlaybackModeService
 import com.github.sahyuya.oyasaiMusic.audio.RecordingSessionManager
 import com.github.sahyuya.oyasaiMusic.command.GetMusicPlayerCommand
 import com.github.sahyuya.oyasaiMusic.command.MusicMenuCommand
-import com.github.sahyuya.oyasaiMusic.command.MusicOpenCommand
-import com.github.sahyuya.oyasaiMusic.command.PlaytestCommand
+import com.github.sahyuya.oyasaiMusic.command.OyasaiMusicCommand
 import com.github.sahyuya.oyasaiMusic.command.RecordCommand
 import com.github.sahyuya.oyasaiMusic.db.DatabaseManager
 import com.github.sahyuya.oyasaiMusic.db.LikeService
@@ -111,26 +110,7 @@ class OyasaiMusic : JavaPlugin() {
         rankingRepository = RankingRepository(databaseManager) // GUIフェーズで追加
 
         // --- サービス層 ---
-        likeService = LikeService(
-            songRepository = songRepository,
-            socialRepository = socialRepository,
-            userRepository = userRepository,
-            likeRewardMoney = config.getLong("economy.like-reward-money", 1000),
-            likeRewardPoints = config.getLong("economy.like-reward-points", 2),
-        )
-        viewCountService = ViewCountService(
-            plugin = this,
-            songRepository = songRepository,
-            userRepository = userRepository,
-            socialRepository = socialRepository,
-            hourLimit = config.getInt("playback.view-limit-per-hour", 3),
-            dayLimit = config.getInt("playback.view-limit-per-day", 10),
-            viewsPerPoint = config.getInt("playback.views-per-point", 10),
-        )
-        economyService = EconomyService(
-            this,
-            config.getString("economy.points-command", "") ?: "",
-        )
+        configureRuntimeServices()
 
         // ============ GUIフェーズで追加: 録音システムより前に用意する必要がある ============
         // （RecordCommandが「録音完了後に楽曲設定画面を自動で開く」ためmenuManagerを必要とするため）
@@ -169,31 +149,13 @@ class OyasaiMusic : JavaPlugin() {
             cmd.tabCompleter = executor
         } ?: logger.warning("recordコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
-        val defaultMode = when (config.getString("playback.default-mode", "default")?.lowercase()) {
-            "positional" -> PlaybackMode.POSITIONAL
-            else -> PlaybackMode.DEFAULT
-        }
-        playbackEngine = PlaybackEngine(
-            plugin = this,
-            bedrockPrefix = config.getString("bedrock.name-prefix", ".") ?: ".",
-            chordLimit = config.getInt("bedrock.chord-limit", 3),
-            defaultMode = defaultMode,
-        )
-
-        getCommand("playtest")?.let { cmd ->
-            val executor = PlaytestCommand(
-                plugin = this,
-                songRepository = songRepository,
-                playbackEngine = playbackEngine,
-                audioDirectory = audioDirectory,
-            )
-            cmd.setExecutor(executor)
-            cmd.tabCompleter = executor
-        } ?: logger.warning("playtestコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+        playbackEngine = createPlaybackEngine()
 
         // ============ ここから GUIフェーズで追加（コマンド登録） ============
         getCommand("musicmenu")?.let { cmd ->
-            cmd.setExecutor(MusicMenuCommand(this))
+            val executor = MusicMenuCommand(this)
+            cmd.setExecutor(executor)
+            cmd.tabCompleter = executor
         } ?: logger.warning("musicmenuコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
         getCommand("getmusicplayer")?.let { cmd ->
@@ -202,9 +164,11 @@ class OyasaiMusic : JavaPlugin() {
             cmd.tabCompleter = executor
         } ?: logger.warning("getmusicplayerコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
-        getCommand("musicopen")?.let { cmd ->
-            cmd.setExecutor(MusicOpenCommand(this))
-        } ?: logger.warning("musicopenコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+        getCommand("oyasaimusic")?.let { cmd ->
+            val executor = OyasaiMusicCommand(this)
+            cmd.setExecutor(executor)
+            cmd.tabCompleter = executor
+        } ?: logger.warning("oyasaimusicコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
         // ---- 環境BGM用レコード（UI/UX設計書9章） ----
         ambientPlaybackRegistry = AmbientPlaybackRegistry(this)
@@ -221,5 +185,45 @@ class OyasaiMusic : JavaPlugin() {
         if (::playbackEngine.isInitialized) playbackEngine.shutdown()
         if (::databaseManager.isInitialized) databaseManager.close()
         logger.info("OyasaiMusicを無効化しました。")
+    }
+
+    /** `/oyasaimusic reload` 用。設定値を参照するサービスを現在のconfigで再構成する。 */
+    fun reloadRuntimeConfiguration() {
+        reloadConfig()
+        configureRuntimeServices()
+        if (::playbackEngine.isInitialized) {
+            val previous = playbackEngine
+            playbackEngine = createPlaybackEngine()
+            previous.shutdown()
+        }
+    }
+
+    private fun configureRuntimeServices() {
+        likeService = LikeService(
+            socialRepository = socialRepository,
+            likeRewardMoney = config.getLong("economy.like-reward-money", 1000),
+            likeRewardPoints = config.getLong("economy.like-reward-points", 2),
+        )
+        viewCountService = ViewCountService(
+            plugin = this,
+            socialRepository = socialRepository,
+            hourLimit = config.getInt("playback.view-limit-per-hour", 3),
+            dayLimit = config.getInt("playback.view-limit-per-day", 10),
+            viewsPerPoint = config.getInt("playback.views-per-point", 10),
+        )
+        economyService = EconomyService(this, config.getString("economy.points-command", "") ?: "")
+    }
+
+    private fun createPlaybackEngine(): PlaybackEngine {
+        val defaultMode = when (config.getString("playback.default-mode", "default")?.lowercase()) {
+            "positional" -> PlaybackMode.POSITIONAL
+            else -> PlaybackMode.DEFAULT
+        }
+        return PlaybackEngine(
+            plugin = this,
+            bedrockPrefix = config.getString("bedrock.name-prefix", ".") ?: ".",
+            chordLimit = config.getInt("bedrock.chord-limit", 3),
+            defaultMode = defaultMode,
+        )
     }
 }

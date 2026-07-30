@@ -6,6 +6,12 @@ import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
+import com.github.sahyuya.oyasaiMusic.model.Song
+import net.kyori.adventure.text.format.NamedTextColor
+
+/** 楽曲名の直後に通常プレイヤーにも見えるMusic IDを一貫して表示する。 */
+fun songTitle(song: Song, color: NamedTextColor = NamedTextColor.WHITE): Component =
+    Component.text(song.title, color).append(Component.text("  #${song.id ?: "-"}", NamedTextColor.DARK_GRAY))
 
 /**
  * GUI表示用ItemStackを組み立てるビルダー。
@@ -32,7 +38,8 @@ class GuiItemBuilder(private val material: Material) {
         val item = ItemStack(material, amount)
         item.editMeta { meta ->
             name?.let { meta.displayName(it) }
-            if (lore.isNotEmpty()) meta.lore(lore)
+            // バニラのレコード名やBundleの「空」など、素材由来のLoreをGUIへ持ち込まない。
+            meta.lore(lore)
             // Paper 1.20.5+: 偽エンチャント無しで光沢のみ付与できるAPI。
             meta.setEnchantmentGlintOverride(if (glint) true else null)
             customModelData?.let { meta.setCustomModelData(it) }

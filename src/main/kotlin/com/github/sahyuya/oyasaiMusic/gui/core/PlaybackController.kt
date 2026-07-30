@@ -28,7 +28,12 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
      * @param onCompletion 再生完了時に追加で呼びたい処理（プレイリストの連続再生等）。
      *        状態のリセット・GUI再描画は本メソッドが自動的に行うため、ここには含めなくてよい。
      */
-    fun play(viewer: Player, song: Song, onCompletion: (() -> Unit)? = null) {
+    fun play(
+        viewer: Player,
+        song: Song,
+        onCompletion: (() -> Unit)? = null,
+        rememberInHistory: Boolean = true,
+    ) {
         val songId = song.id
         if (songId == null) {
             viewer.sendMessage("§c保存前の楽曲は再生できません。")
@@ -80,6 +85,7 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
                 state.isPlaying = true
                 state.nowPlayingSong = song
                 state.activeSession = session
+                if (rememberInHistory) rememberSong(state, song)
                 menuManager.refreshCurrent(viewer.uniqueId)
                 viewer.sendMessage("§a再生開始: §f${song.title}")
             })
@@ -142,10 +148,38 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
         menuManager.refreshCurrent(viewer.uniqueId)
     }
 
+    /** 試聴履歴の直前の楽曲へ戻る。プレイリストを開いていない画面でも利用できる。 */
+    fun playPrevious(viewer: Player) = moveInHistory(viewer, -1, "前の曲はありません。")
+
+    /** 試聴履歴の次の楽曲へ進む。 */
+    fun playNext(viewer: Player) = moveInHistory(viewer, 1, "次の曲はありません。")
+
+    private fun moveInHistory(viewer: Player, direction: Int, noSongMessage: String) {
+        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
+        val targetIndex = state.listeningHistoryIndex + direction
+        val target = state.listeningHistory.getOrNull(targetIndex)
+        if (target == null) {
+            viewer.sendMessage("§7$noSongMessage")
+            return
+        }
+        state.listeningHistoryIndex = targetIndex
+        play(viewer, target, rememberInHistory = false)
+    }
+
+    private fun rememberSong(state: PlayerControllerState, song: Song) {
+        // 同じ曲を再生/再開しただけなら履歴を重複させない。
+        if (state.listeningHistory.getOrNull(state.listeningHistoryIndex)?.id == song.id) return
+        if (state.listeningHistoryIndex < state.listeningHistory.lastIndex) {
+            state.listeningHistory.subList(state.listeningHistoryIndex + 1, state.listeningHistory.size).clear()
+        }
+        state.listeningHistory += song
+        state.listeningHistoryIndex = state.listeningHistory.lastIndex
+    }
+
     /**
      * 下段メディアコントローラーの共通クリック処理。各画面のonClickから呼び出す。
-     * PREV_SONG/NEXT_SONGはプレイリスト画面等、文脈が必要な操作のため各画面側で個別に処理すること
-     * （ここでは「未対応」として案内するのみ）。
+     * PREV_SONG/NEXT_SONG はプレイヤーごとの試聴履歴を利用するため、一覧・詳細・コマンド試聴の
+     * いずれからでも前後の曲に移動できる。
      *
      * @return true = ここで処理した（呼び出し元は追加のswitch分岐が不要）
      */
@@ -155,8 +189,8 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
             ControllerSlots.NOW_PLAYING -> openNowPlayingDetail(viewer)
             ControllerSlots.LOOP -> toggleLoop(viewer)
             ControllerSlots.SHUFFLE -> toggleShuffle(viewer)
-            ControllerSlots.PREV_SONG, ControllerSlots.NEXT_SONG ->
-                viewer.sendMessage("§7この操作はプレイリスト画面内でのみ利用できます。")
+            ControllerSlots.PREV_SONG -> playPrevious(viewer)
+            ControllerSlots.NEXT_SONG -> playNext(viewer)
             else -> return false
         }
         return true

@@ -32,8 +32,8 @@ import java.util.ArrayDeque
  *    発音した時点でそのノートブロック自身もBFSの伝播元として扱う。
  *  - リピーターは向いている方向にのみ伝播し、delay(1〜4) × 100ms を加算する
  *  - コンパレーターは今回は非対応（信号は通過しない）
- *  - 各座標はBFSで1度のみ処理する（強電力/弱電力の区別、同一ブロックへの複数経路到達による
- *    再トリガーは考慮しない）
+ *  - 同じ座標でもリピーター遅延後に再到達することがあるため、探索済み判定は
+ *    「座標 + 到達時刻」で行う（強電力/弱電力の区別は考慮しない）
  *  - ノートブロックは信号が届いた時点のクリップボード内の音階・楽器をそのまま採用する
  *  - 音量・Panは、ノートブロック真上の看板があれば[SignOverrideProcessor]で上書きする
  *    （ワールド上にまだ残っている元の看板を読み取る。詳細は[SignOverrideProcessor.extractFromWorldPos]）
@@ -51,6 +51,8 @@ object CircuitRecorder {
 
     /** 回路型にはBPMが無いため、看板の音価指定では120BPM相当の四分音符長を用いる。 */
     private const val QUARTER_NOTE_MS = 500.0
+    /** フィードバック回路を静的解析した際に、無限に未来へ展開しないための上限。 */
+    private const val MAX_SIGNAL_TIME_MS = 10 * 60 * 1000
 
     // 水平4方位 + 真上/真下 + 1段上り + 1段下りの、ダスト(または通電した固体ブロックの上のダスト)が
     // 伝播しうる相対オフセット。真上(0,1,0)は「ノートブロックや電源ブロックの真上に乗ったダスト」を
@@ -92,7 +94,9 @@ object CircuitRecorder {
         val min = region.minimumPoint
         val max = region.maximumPoint
 
-        val visited = HashSet<BlockVector3>()
+        // 座標だけで訪問済みにすると、先に到達したダスト/ノートのために後続リピーターの
+        // 出力が捨てられ、直列回路が最初の一音で止まってしまう。到達時刻も状態に含める。
+        val visitedStates = HashSet<Pair<BlockVector3, Int>>()
         val queue = ArrayDeque<Node>()
         val notes = mutableListOf<RawNote>()
         // (ノートブロック位置, 発音ミリ秒) の組で発音を重複記録しないようにする
@@ -106,7 +110,7 @@ object CircuitRecorder {
                     val data = blockDataAt(clipboard, pos) ?: continue
                     if (!isPowerSource(data)) continue
 
-                    if (visited.add(pos)) {
+                    if (visitedStates.add(pos to 0)) {
                         queue.add(Node(pos, 0))
                     }
 
@@ -117,11 +121,11 @@ object CircuitRecorder {
                         val reachData = blockDataAt(clipboard, reachPos) ?: continue
 
                         if (reachData.material == Material.REDSTONE_WIRE) {
-                            if (visited.add(reachPos)) {
+                            if (visitedStates.add(reachPos to 0)) {
                                 queue.add(Node(reachPos, 0))
                             }
                         } else if (reachData is BukkitNoteBlock) {
-                            fireNoteAndContinue(reachData, reachPos, 0, world, notes, firedNoteKeys, visited, queue)
+                            fireNoteAndContinue(reachData, reachPos, 0, world, notes, firedNoteKeys, visitedStates, queue)
                         }
                     }
                 }
@@ -143,7 +147,7 @@ object CircuitRecorder {
                 if (!region.contains(neighborPos)) continue
                 val neighborData = blockDataAt(clipboard, neighborPos) ?: continue
                 if (neighborData is BukkitNoteBlock) {
-                    fireNoteAndContinue(neighborData, neighborPos, timeMs, world, notes, firedNoteKeys, visited, queue)
+                    fireNoteAndContinue(neighborData, neighborPos, timeMs, world, notes, firedNoteKeys, visitedStates, queue)
                 }
             }
 
@@ -152,9 +156,7 @@ object CircuitRecorder {
                 val neighborPos = pos.add(dx, dy, dz)
                 if (!region.contains(neighborPos)) continue
                 val neighborData = blockDataAt(clipboard, neighborPos) ?: continue
-                // 非ダストまで visited に入れると、後続のリピーター出力先が「既訪問」と
-                // 誤認されてキュー投入される前に失われる。これが連鎖回路が一音で止まる原因だった。
-                if (neighborData.material == Material.REDSTONE_WIRE && visited.add(neighborPos)) {
+                if (neighborData.material == Material.REDSTONE_WIRE && visitedStates.add(neighborPos to timeMs)) {
                     queue.add(Node(neighborPos, timeMs))
                 }
             }
@@ -176,12 +178,13 @@ object CircuitRecorder {
                 if (!region.contains(outputPos)) continue
                 val delayMs = repeaterData.delay * 100
                 val newTime = timeMs + delayMs
+                if (newTime > MAX_SIGNAL_TIME_MS) continue
                 val outputData = blockDataAt(clipboard, outputPos) ?: continue
                 // リピーターの出力先がノートブロックの場合、出力先をキューに積むだけでは
                 // 「自分自身のノート」を判定する経路が無く、音が記録されない。
                 if (outputData is BukkitNoteBlock) {
-                    fireNoteAndContinue(outputData, outputPos, newTime, world, notes, firedNoteKeys, visited, queue)
-                } else if (visited.add(outputPos)) {
+                    fireNoteAndContinue(outputData, outputPos, newTime, world, notes, firedNoteKeys, visitedStates, queue)
+                } else if (visitedStates.add(outputPos to newTime)) {
                     queue.add(Node(outputPos, newTime))
                 }
             }
@@ -205,7 +208,7 @@ object CircuitRecorder {
         world: World,
         notes: MutableList<RawNote>,
         firedNoteKeys: MutableSet<Pair<BlockVector3, Int>>,
-        visited: MutableSet<BlockVector3>,
+        visitedStates: MutableSet<Pair<BlockVector3, Int>>,
         queue: ArrayDeque<Node>,
     ) {
         val key = pos to timeMs
@@ -225,7 +228,7 @@ object CircuitRecorder {
                 pan = pan,
             )
         }
-        if (visited.add(pos)) {
+        if (timeMs <= MAX_SIGNAL_TIME_MS && visitedStates.add(pos to timeMs)) {
             queue.add(Node(pos, timeMs))
         }
     }

@@ -16,16 +16,10 @@ commands:
       /record start <1-4>     - 動的録音を開始（引数は量子化グリッドの遅延単位）
       /record stop            - 動的録音を終了して下書き保存
     permission: oyasaimusic.record
-  playtest:
-    description: 楽曲再生テストコマンド
-    usage: |
-      /playtest <楽曲ID>      - 指定楽曲を再生
-      /playtest stop          - 再生中の楽曲を停止
-    permission: oyasaimusic.use
   musicmenu:
-    description: トップメニュー(メインメニュー)GUIを開く（GUIフェーズで追加）
+    description: 音楽メニューを開く、または楽曲を操作する
     aliases: [mm]
-    usage: /musicmenu - メインメニューGUIを開く
+    usage: /musicmenu [play|open] <ID>
     permission: oyasaimusic.use
   getmusicplayer:
     description: 物理アイテム「音楽プレイヤー」を取得する（GUIフェーズで追加）
@@ -34,9 +28,11 @@ commands:
       /getmusicplayer          - 自分自身に音楽プレイヤーを配布
       /getmusicplayer <player> - 指定プレイヤーに配布（OP/コンソール専用）
     permission: oyasaimusic.use
-  musicopen:
-    description: 新曲公開のチャット通知から楽曲詳細画面を開く内部コマンド（プレイヤーが直接打つ想定ではない）
-    permission: oyasaimusic.use
+  oyasaimusic:
+    description: OyasaiMusic管理コマンド
+    aliases: [om]
+    usage: /oyasaimusic <reload|update>
+    permission: oyasaimusic.admin
 
 permissions:
   oyasaimusic.admin:

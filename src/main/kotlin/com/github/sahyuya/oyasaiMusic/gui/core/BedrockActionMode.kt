@@ -12,11 +12,11 @@ import java.util.concurrent.ConcurrentHashMap
  * 各値は UI/UX設計書 5章の表の列（①左クリック ②Shift+左クリック ③右クリック ④Shift+右クリック）
  * に対応する。
  */
-enum class ActionMode(val displayIndex: Int) {
-    PRIMARY(1),
-    SECONDARY(2),
-    TERTIARY(3),
-    QUATERNARY(4);
+enum class ActionMode(val displayName: String) {
+    PRIMARY("左クリック"),
+    SECONDARY("Shift+左クリック"),
+    TERTIARY("右クリック"),
+    QUATERNARY("Shift+右クリック");
 
     fun next(): ActionMode = entries[(ordinal + 1) % entries.size]
 }

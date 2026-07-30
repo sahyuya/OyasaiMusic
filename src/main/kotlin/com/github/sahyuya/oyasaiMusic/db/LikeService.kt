@@ -12,9 +12,7 @@ import java.util.UUID
  * 呼び出しは非同期スレッドから行うこと（内部のDBアクセスが同期的なため）。
  */
 class LikeService(
-    private val songRepository: SongRepository,
     private val socialRepository: SocialRepository,
-    private val userRepository: UserRepository,
     private val likeRewardMoney: Long,
     private val likeRewardPoints: Long,
 ) {
@@ -24,12 +22,12 @@ class LikeService(
      */
     fun like(likerUuid: UUID, song: Song): Boolean {
         val songId = song.id ?: return false
-        val added = socialRepository.addLike(likerUuid, songId)
-        if (!added) return false
-
-        songRepository.incrementLikes(songId, 1)
-        userRepository.addPending(likerUuid, money = likeRewardMoney)
-        userRepository.addPending(song.authorUuid, points = likeRewardPoints)
-        return true
+        return socialRepository.registerLikeWithRewards(
+            likerUuid = likerUuid,
+            authorUuid = song.authorUuid,
+            songId = songId,
+            likerMoneyReward = likeRewardMoney,
+            authorPointReward = likeRewardPoints,
+        )
     }
 }

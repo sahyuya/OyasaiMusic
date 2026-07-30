@@ -88,6 +88,28 @@ class RankingCacheService(private val plugin: OyasaiMusic, private val rankingRe
         Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, Runnable { recomputeTotal() }, 20L * 60 * 30, 20L * 60 * 30)
     }
 
+    /** キャッシュJSONを再読込し、GUIに公開するスナップショットも差し替える。 */
+    fun reloadCache() {
+        load()
+        dailySnapshot = state.daily
+        weeklySnapshot = state.weekly
+        totalSnapshot = state.total
+    }
+
+    /** 管理コマンド用: 日間・週間ランキングを現在時刻基準で即時に再集計する。 */
+    fun refreshPeriodRankings() {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now(zone)
+            recomputeDaily(today, zone)
+            val monday = today.with(DayOfWeek.MONDAY)
+            recomputeWeekly(monday, zone)
+            state.lastDailyBoundaryEpochDay = today.toEpochDay()
+            state.lastWeeklyBoundaryEpochDay = monday.toEpochDay()
+            save()
+        })
+    }
+
     private fun checkBoundariesAndRecompute(forceTotal: Boolean) {
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)

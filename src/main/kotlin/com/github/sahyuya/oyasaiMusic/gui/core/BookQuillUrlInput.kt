@@ -44,7 +44,8 @@ object BookQuillUrlInput {
         installListenerOnce(plugin)
 
         val slot = player.inventory.heldItemSlot
-        val previous = player.inventory.getItem(slot)
+        // ItemStackは可変なのでcloneして退避する。参照のままだとクライアント同期で上書きされる。
+        val previous = player.inventory.getItem(slot)?.clone()
         pending[player.uniqueId] = Pending(slot, previous, onSubmit)
 
         val book = ItemStack(Material.WRITABLE_BOOK)
@@ -64,12 +65,18 @@ object BookQuillUrlInput {
             fun onEdit(event: PlayerEditBookEvent) {
                 val player = event.player
                 val session = pending.remove(player.uniqueId) ?: return
-
-                player.inventory.setItem(session.slot, session.previousItem)
+                // 編集済み本を通常アイテムとして確定させず、退避品だけを確実に戻す。
+                event.isCancelled = true
 
                 // BookMeta#getPage(int)は1始まりのページ番号を取る旧来API（プレーンな文字列を返す）。
                 val text = event.newBookMeta.getPage(1)?.trim().orEmpty()
-                if (text.isNotEmpty()) session.onSubmit(text)
+                Bukkit.getScheduler().runTask(plugin, Runnable {
+                    player.inventory.setItem(session.slot, session.previousItem)
+                    // キャンセルした本編集パケットが直後にクライアント側の手持ち表示へ反映されないよう、
+                    // 復元後のインベントリを明示的に同期する。
+                    player.updateInventory()
+                    if (text.isNotEmpty()) session.onSubmit(text)
+                })
             }
         }, plugin)
     }

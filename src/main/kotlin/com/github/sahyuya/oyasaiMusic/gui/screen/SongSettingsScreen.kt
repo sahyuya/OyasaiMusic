@@ -96,7 +96,7 @@ class SongSettingsScreen(
             .lore(Component.text("現在: ${song.referenceUrl ?: "未設定"}", NamedTextColor.GRAY)).build())
         inventory.setItem(submitReviewSlot, submitReviewItem())
         inventory.setItem(titleSlot, GuiItemBuilder(Material.OAK_SIGN).name(Component.text("題名を変更", NamedTextColor.YELLOW))
-            .lore(Component.text("現在: ${song.title}", NamedTextColor.GRAY)).build())
+            .lore(Component.text("現在: ${song.title}  #${song.id ?: "-"}", NamedTextColor.GRAY)).build())
         inventory.setItem(bpmSlot, GuiItemBuilder(Material.REPEATER).name(Component.text("BPM(再生速度)を変更", NamedTextColor.YELLOW))
             .lore(Component.text("現在: ${song.bpm}", NamedTextColor.GRAY)).build())
         inventory.setItem(recordTypeSlot, recordTypeItem())
@@ -108,7 +108,7 @@ class SongSettingsScreen(
     }
 
     private fun previewItem() = GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
-        .name(Component.text(song.title, NamedTextColor.AQUA))
+        .name(songTitle(song, NamedTextColor.AQUA))
         .lore(
             Component.text("ステータス: ${statusLabel(song.status)}", NamedTextColor.GRAY),
             Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
@@ -269,7 +269,7 @@ class SongSettingsScreen(
             .append(Component.text(" by $authorName ", NamedTextColor.GRAY))
             .append(
                 Component.text("[クリックで再生]", NamedTextColor.GREEN)
-                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/musicopen ${song.id}")),
+                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/mm open ${song.id}")),
             )
         Bukkit.getOnlinePlayers().forEach { it.sendMessage(message) }
     }

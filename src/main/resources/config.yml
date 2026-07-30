@@ -38,9 +38,8 @@ economy:
   # レコード売上の作者還元率
   record-sale-author-share: 0.8
   # TokenManager 等へポイントを付与するコンソールコマンド。%player% と %points%（または%amount%）を使える。
-  # 空欄の場合、ポイント報酬はDBに保持され、受け取り時にも失われない。
-  # 例: "tokenmanager add %player% %points%"
-  points-command: ""
+  # /tokenmanager add <player> <値> に合わせた既定値。%player% と %points%（または%amount%）を使える。
+  points-command: "tokenmanager add %player% %points%"
 
 bedrock:
   # 統合版(Geyser/Floodgate)プレイヤーの検知に使う名前接頭辞

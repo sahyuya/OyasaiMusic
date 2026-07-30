@@ -33,11 +33,16 @@ object ActionLoreBuilder {
                 ActionMode.TERTIARY -> tertiary
                 ActionMode.QUATERNARY -> quaternary
             }
-            listOf(Component.text("タップ: $label (モード${current.displayIndex})", NamedTextColor.DARK_GRAY))
+            listOf(
+                Component.text("タップ (${current.displayName}): ", NamedTextColor.DARK_GRAY)
+                    .append(Component.text(label, NamedTextColor.AQUA)),
+            )
         } else {
             listOf(
-                Component.text("左:$primary  Shift+左:$secondary", NamedTextColor.DARK_GRAY),
-                Component.text("右:$tertiary  Shift+右:$quaternary", NamedTextColor.DARK_GRAY),
+                Component.text("左クリック: ", NamedTextColor.GRAY).append(Component.text(primary, NamedTextColor.GREEN))
+                    .append(Component.text("  Shift+左クリック: ", NamedTextColor.GRAY)).append(Component.text(secondary, NamedTextColor.AQUA)),
+                Component.text("右クリック: ", NamedTextColor.GRAY).append(Component.text(tertiary, NamedTextColor.GOLD))
+                    .append(Component.text("  Shift+右クリック: ", NamedTextColor.GRAY)).append(Component.text(quaternary, NamedTextColor.LIGHT_PURPLE)),
             )
         }
     }

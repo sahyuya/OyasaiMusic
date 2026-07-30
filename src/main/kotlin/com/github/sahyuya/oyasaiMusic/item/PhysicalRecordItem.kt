@@ -51,7 +51,11 @@ object PhysicalRecordItem {
     fun create(plugin: Plugin, material: Material, songId: Long, title: String, authorName: String): ItemStack {
         val item = ItemStack(material)
         item.editMeta { meta ->
-            meta.displayName(Component.text(title, NamedTextColor.AQUA).decoration(TextDecoration.ITALIC, false))
+            meta.displayName(
+                Component.text(title, NamedTextColor.AQUA)
+                    .append(Component.text("  #$songId", NamedTextColor.DARK_GRAY))
+                    .decoration(TextDecoration.ITALIC, false),
+            )
             meta.lore(
                 listOf(
                     Component.text("作者: $authorName", NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false),

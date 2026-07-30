@@ -54,11 +54,27 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
     }
 
     /**
-     * DB操作を同期化して実行する。呼び出し元は非同期スレッドであることを前提とする。
+     * DB操作を同期化し、成功時はcommit・例外時はrollbackする。
+     *
+     * 単一Connectionを共有しているため、呼び出しは直列化する。ネストした呼び出しでは
+     * 最も外側だけがcommit/rollbackを担当するため、リポジトリ内の複数SQLも一貫して扱える。
+     * 呼び出し元は非同期スレッドであることを前提とする。
      */
     fun <T> transaction(block: (Connection) -> T): T {
         synchronized(lock) {
-            return block(connection)
+            check(::connection.isInitialized && !connection.isClosed) { "データベース接続が利用できません" }
+            val outermost = connection.autoCommit
+            if (outermost) connection.autoCommit = false
+            try {
+                val result = block(connection)
+                if (outermost) connection.commit()
+                return result
+            } catch (error: Throwable) {
+                if (outermost) runCatching { connection.rollback() }
+                throw error
+            } finally {
+                if (outermost) connection.autoCommit = true
+            }
         }
     }
 

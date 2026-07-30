@@ -44,7 +44,6 @@ class SongDetailScreen(
     private val likeSlot = 20         // クリックでいいね
     private val favoriteSlot = 21     // クリックでお気に入り/プレイリスト追加
     private val buyRecordSlot = 22    // レコードを購入（サヒュヤ氏の指示で追加。UI/UX設計書7章のレコード販売に対応）
-    private val statsSlot = 23// 統計表示（非インタラクティブ）
     private val referenceUrlSlot = 24 // クリックで参考リンクをチャット出力
     private val backSlot = 37         // サヒュヤ氏指定: 戻る(矢)
 
@@ -86,7 +85,6 @@ class SongDetailScreen(
         inventory.setItem(favoriteSlot, GuiItemBuilder(Material.CHISELED_BOOKSHELF)
             .name(Component.text("お気に入り/プレイリストに追加", NamedTextColor.YELLOW)).build())
         inventory.setItem(buyRecordSlot, buyRecordItem())
-        inventory.setItem(statsSlot, statsItem())
         inventory.setItem(referenceUrlSlot, referenceUrlItem())
         if (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin")) {
             inventory.setItem(settingsSlot, GuiItemBuilder(Material.COMPARATOR)
@@ -102,7 +100,7 @@ class SongDetailScreen(
     private fun previewItem(state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
         val nowPlaying = state.isPlaying && state.nowPlayingSong?.id == song.id
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
-            .name(Component.text(song.title, NamedTextColor.AQUA))
+            .name(songTitle(song, NamedTextColor.AQUA))
             .lore(
                 Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
                 Component.text("BPM: ${song.bpm}", NamedTextColor.GRAY),
@@ -124,10 +122,20 @@ class SongDetailScreen(
 
     private fun authorHeadItem(): org.bukkit.inventory.ItemStack {
         val name = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
+        val stats = AuthorStatsCache.get(plugin, song.authorUuid) { render() }
         val item = HeadTextureUtil.placeholderHead(song.authorUuid, name)
         item.editMeta { meta ->
             meta.displayName(Component.text("作者: $name", NamedTextColor.GOLD))
-            meta.lore(listOf(Component.text("クリックで作品一覧へ", NamedTextColor.GRAY)))
+            meta.lore(buildList {
+                add(Component.text("クリックで作品一覧へ", NamedTextColor.GRAY))
+                if (stats == null) add(Component.text("統計を読み込み中...", NamedTextColor.DARK_GRAY))
+                else {
+                    add(Component.text("総いいね数: ${stats.totalLikes}", NamedTextColor.GRAY))
+                    add(Component.text("総お気に入り数: ${stats.totalFavorites}", NamedTextColor.GRAY))
+                    add(Component.text("総視聴回数: ${stats.totalViews}", NamedTextColor.GRAY))
+                    add(Component.text("総フォロワー数: ${stats.totalFollowers}", NamedTextColor.GRAY))
+                }
+            })
         }
         return item
     }
@@ -176,14 +184,6 @@ class SongDetailScreen(
         .glint(hasLiked)
         .build()
 
-    private fun statsItem() = GuiItemBuilder(Material.EMERALD)
-        .name(Component.text("統計", NamedTextColor.GREEN))
-        .lore(
-            Component.text("いいね: ${song.likes}", NamedTextColor.GRAY),
-            Component.text("再生数: ${song.views}", NamedTextColor.GRAY),
-            Component.text("価格: ${song.price}円", NamedTextColor.GRAY),
-        )
-        .build()
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
