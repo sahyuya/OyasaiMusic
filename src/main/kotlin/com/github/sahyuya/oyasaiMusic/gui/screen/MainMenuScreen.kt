@@ -13,6 +13,8 @@ import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.inventory.ItemStack
 import com.github.sahyuya.oyasaiMusic.economy.PayoutResult
+import com.github.sahyuya.oyasaiMusic.model.UserRewardData
+import com.github.sahyuya.oyasaiMusic.audio.PluginSoundEffect
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -55,9 +57,11 @@ class MainMenuScreen(
 
     private val claimSlot = 24
     private val adminEntrySlot = 26
+    private var rewards = UserRewardData(viewer.uniqueId)
 
     init {
         render()
+        reloadRewards()
     }
 
     private fun render() {
@@ -80,7 +84,11 @@ class MainMenuScreen(
             claimSlot,
             GuiItemBuilder(Material.BUNDLE)
                 .name(Component.text("未受け取り報酬を受け取る", NamedTextColor.GREEN))
-                .lore(Component.text("クリックで一括受取", NamedTextColor.GRAY))
+                .lore(
+                    Component.text("受取: ${rewards.pendingMoney}円 / ${rewards.pendingPoints}pt", NamedTextColor.GOLD),
+                    Component.text("総収入: ${rewards.totalMoney}円 / ${rewards.totalPoints}pt", NamedTextColor.AQUA),
+                    Component.text("クリックで一括受取", NamedTextColor.GRAY),
+                )
                 .build(),
         )
 
@@ -95,6 +103,16 @@ class MainMenuScreen(
         } else {
             inventory.setItem(adminEntrySlot, null)
         }
+    }
+
+    private fun reloadRewards() {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
+            val loaded = plugin.userRepository.get(viewer.uniqueId)
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                rewards = loaded
+                render()
+            })
+        })
     }
 
     private fun snapshotFor(column: RankingColumn): RankingSnapshot? = when (column) {
@@ -211,7 +229,12 @@ class MainMenuScreen(
                         if (pending.pendingMoney > 0) messages += if (moneyResult is PayoutResult.Success) "${pending.pendingMoney}円" else "お金: ${payoutFailure(moneyResult)}"
                         if (pending.pendingPoints > 0) messages += if (pointResult is PayoutResult.Success) "${pending.pendingPoints}pt" else "ポイント: ${payoutFailure(pointResult)}"
                         viewer.sendMessage("§a受取結果: §f${messages.joinToString(" / ")}")
+                        if ((pending.pendingMoney > 0 && moneyResult is PayoutResult.Success) ||
+                            (pending.pendingPoints > 0 && pointResult is PayoutResult.Success)) {
+                            plugin.soundEffectService.play(PluginSoundEffect.REWARD_CLAIM, listOf(viewer))
+                        }
                         claimsInProgress.remove(viewer.uniqueId)
+                        reloadRewards()
                     })
                 })
             })

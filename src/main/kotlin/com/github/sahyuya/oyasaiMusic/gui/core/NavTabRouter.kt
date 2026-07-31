@@ -32,10 +32,10 @@ object NavTabRouter {
 
         if (tab == NavTab.ACTION_MODE) {
             if (actionModeCategory == null) {
-                viewer.sendMessage("§7この画面ではアクションモードは使用しません。")
+                GuiFeedback.invalid(viewer, "この画面ではアクションモードは使用しません")
             } else {
                 val next = BedrockActionModeService.cycle(viewer.uniqueId, actionModeCategory)
-                viewer.sendMessage("§bアクションモードを切り替えました: ${next.displayName}")
+                GuiFeedback.info(viewer, "アクションモード: ${next.displayName}")
                 menuManager.refreshCurrent(viewer.uniqueId)
             }
             return true

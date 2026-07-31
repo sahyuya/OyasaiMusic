@@ -15,9 +15,8 @@ import org.bukkit.event.inventory.InventoryClickEvent
  * 楽曲一覧・楽曲詳細から「お気に入り/プレイリストへ追加」しようとした際に開く選択画面
  * （左列緑タブから直接開く[FavoritesPlaylistsScreen]とは別物）。
  *
- * サヒュヤ氏の指示により、コンテンツ領域(1,4)＝slot37に「戻る」ボタン(矢)を設置する。
- * 背景装飾は使わない（他のプレイリスト系画面と同様、5×8フル表示・左上(slot1)から詰めて
- * 並べる表示に統一。ただしslot37は戻るボタン用に予約するため、コンテンツからは除外する）。
+ * 背景装飾は使わず、5×8の40枠をすべて使用する。1ページ目の戻る操作は
+ * 下段の「前のページ」欄を矢印に置き換えて提供する。
  */
 class PlaylistSelectionScreen(
     private val plugin: OyasaiMusic,
@@ -27,15 +26,19 @@ class PlaylistSelectionScreen(
 ) : BaseGridMenu(viewer, Component.text("お気に入り♪プレイリスト選択")) {
 
     companion object {
-        private const val BACK_SLOT = 37
-        // サヒュヤ氏の指示: 5×8フル(40スロット)、slot1(左上)から詰めて表示する。戻るボタン分のみ除く。
-        val SLOTS: List<Int> = com.github.sahyuya.oyasaiMusic.gui.ContentGrid.SLOTS.filter { it != BACK_SLOT }
-        private const val FAVORITES_INDEX = 0
+        private const val PAGE_SIZE = 40
+        val SLOTS: List<Int> = ContentGrid.SLOTS
     }
 
     private var playlists: List<Playlist> = emptyList()
+    private var page = 0
 
-    init { reload() }
+    init {
+        if (!targetSong.published) {
+            GuiFeedback.invalid(viewer, "非公開の楽曲はお気に入り・プレイリストへ追加できません")
+            menuManager.openPrevious(viewer)
+        } else reload()
+    }
 
     override fun refresh() = reload()
 
@@ -52,65 +55,56 @@ class PlaylistSelectionScreen(
     private fun render() {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
-
-        inventory.setItem(
-            SLOTS[FAVORITES_INDEX],
-            GuiItemBuilder(Material.NETHER_STAR)
-                .name(Component.text("お気に入りに追加", NamedTextColor.LIGHT_PURPLE))
-                .lore(Component.text("「${targetSong.title}」を追加", NamedTextColor.GRAY))
-                .build(),
-        )
-
-        playlists.forEachIndexed { i, playlist ->
-            val slotIndex = FAVORITES_INDEX + 1 + i
-            if (slotIndex < SLOTS.size) {
-                inventory.setItem(
-                    SLOTS[slotIndex],
-                    GuiItemBuilder(Material.CHISELED_BOOKSHELF)
-                        .name(Component.text(playlist.name, NamedTextColor.YELLOW))
-                        .lore(Component.text("${playlist.songCount} 曲", NamedTextColor.GRAY))
-                        .build(),
-                )
-            }
+        SLOTS.forEachIndexed { index, slot ->
+            val globalIndex = page * PAGE_SIZE + index
+            inventory.setItem(slot, selectionItem(globalIndex))
         }
+        if (page == 0) inventory.setItem(ControllerSlots.PAGE_PREV, GuiChrome.backControllerButton())
+    }
 
-        val createIndex = FAVORITES_INDEX + 1 + playlists.size
-        if (createIndex < SLOTS.size) {
-            inventory.setItem(
-                SLOTS[createIndex],
-                GuiItemBuilder(Material.WRITABLE_BOOK)
-                    .name(Component.text("+ 新規プレイリストを作成して追加", NamedTextColor.GREEN))
-                    .build(),
-            )
+    private fun selectionItem(globalIndex: Int): org.bukkit.inventory.ItemStack? = when {
+        globalIndex == 0 -> GuiItemBuilder(Material.NETHER_STAR)
+            .name(Component.text("お気に入りに追加", NamedTextColor.LIGHT_PURPLE))
+            .lore(Component.text("「${targetSong.title}」を追加", NamedTextColor.GRAY))
+            .build()
+        globalIndex in 1..playlists.size -> playlists[globalIndex - 1].let { playlist ->
+            GuiItemBuilder(Material.CHISELED_BOOKSHELF)
+                .name(Component.text(playlist.name, NamedTextColor.YELLOW))
+                .lore(Component.text("${playlist.songCount} 曲", NamedTextColor.GRAY))
+                .build()
         }
-
-        inventory.setItem(
-            BACK_SLOT,
-            GuiItemBuilder(Material.ARROW).name(Component.text("戻る", NamedTextColor.WHITE)).build(),
-        )
+        globalIndex == playlists.size + 1 -> GuiItemBuilder(Material.WRITABLE_BOOK)
+            .name(Component.text("+ 新規プレイリストを作成して追加", NamedTextColor.GREEN))
+            .build()
+        else -> null
     }
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (slot == BACK_SLOT) {
-            menuManager.openPrevious(viewer)
+        if (slot == ControllerSlots.PAGE_PREV) {
+            if (page > 0) { page--; render() } else menuManager.openPrevious(viewer)
+            return
+        }
+        if (slot == ControllerSlots.PAGE_NEXT) {
+            if ((page + 1) * PAGE_SIZE < playlists.size + 2) { page++; render() }
             return
         }
         if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
         if (plugin.playbackController.handleControllerClick(slot, viewer)) return
 
-        val index = SLOTS.indexOf(slot)
-        if (index == -1) return
+        val slotIndex = SLOTS.indexOf(slot)
+        if (slotIndex == -1) return
+        val index = page * PAGE_SIZE + slotIndex
 
-        if (index == FAVORITES_INDEX) {
+        if (index == 0) {
             addToFavorites()
             return
         }
-        val playlistIndex = index - FAVORITES_INDEX - 1
+        val playlistIndex = index - 1
         val playlist = playlists.getOrNull(playlistIndex)
         if (playlist != null) {
             addToPlaylist(playlist)
-        } else if (index == FAVORITES_INDEX + 1 + playlists.size) {
+        } else if (index == playlists.size + 1) {
             createPlaylistAndAdd()
         }
     }

@@ -98,6 +98,7 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                         file_name       TEXT NOT NULL,
                         supports_positional INTEGER NOT NULL DEFAULT 0,
                         published       INTEGER NOT NULL DEFAULT 0,
+                        first_published_at INTEGER,
                         review_requested_at INTEGER
                     );
                     """.trimIndent()
@@ -112,7 +113,9 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                     CREATE TABLE IF NOT EXISTS users (
                         uuid            BLOB(16) PRIMARY KEY,
                         pending_money   INTEGER NOT NULL DEFAULT 0,
-                        pending_points  INTEGER NOT NULL DEFAULT 0
+                        pending_points  INTEGER NOT NULL DEFAULT 0,
+                        total_money     INTEGER NOT NULL DEFAULT 0,
+                        total_points    INTEGER NOT NULL DEFAULT 0
                     );
                     """.trimIndent()
                 )
@@ -243,6 +246,15 @@ class DatabaseManager(private val plugin: Plugin, databaseFileName: String) {
                     st.executeUpdate("ALTER TABLE songs ADD COLUMN review_requested_at INTEGER;")
                 }
                 plugin.logger.info("DBマイグレーション: songs.review_requested_at カラムを追加しました。")
+            }
+            if (!columnExists(conn, "songs", "first_published_at")) {
+                conn.createStatement().use { it.executeUpdate("ALTER TABLE songs ADD COLUMN first_published_at INTEGER;") }
+            }
+            if (!columnExists(conn, "users", "total_money")) {
+                conn.createStatement().use { it.executeUpdate("ALTER TABLE users ADD COLUMN total_money INTEGER NOT NULL DEFAULT 0;") }
+            }
+            if (!columnExists(conn, "users", "total_points")) {
+                conn.createStatement().use { it.executeUpdate("ALTER TABLE users ADD COLUMN total_points INTEGER NOT NULL DEFAULT 0;") }
             }
             conn.createStatement().use { st ->
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_songs_review_requested ON songs(review_requested_at);")

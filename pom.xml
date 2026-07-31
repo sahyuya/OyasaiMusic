@@ -22,6 +22,17 @@
         <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <!-- 録音済み効果音はテキスト置換せず、バイナリのままJARへ格納する。 -->
+                    <nonFilteredFileExtensions>
+                        <nonFilteredFileExtension>bin</nonFilteredFileExtension>
+                    </nonFilteredFileExtensions>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>
                 <version>${kotlin.version}</version>
@@ -110,6 +121,14 @@
             <artifactId>paper-api</artifactId>
             <version>1.21.11-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- 一時AdvancementパケットによるToast送信用。実行時は同系統のPaper/Purpur本体が提供する。 -->
+        <dependency>
+            <groupId>org.purpurmc</groupId>
+            <artifactId>purpur-server</artifactId>
+            <version>1.21.11-2568</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/libs/purpur-1.21.11-2568.jar</systemPath>
         </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>

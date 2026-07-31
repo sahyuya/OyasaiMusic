@@ -123,13 +123,17 @@ class SongRepository(private val db: DatabaseManager) {
         }
     }
 
-    /** 審査依頼を永続化する。同じ楽曲への再依頼では最初の依頼時刻を維持する。 */
+    /**
+     * オリジナル審査の依頼を永続化し、提出時点で仮OKへ移す。
+     * 仮OKは「作者が申請済み」の暫定状態であり、OP審査画面では許可／未審査／却下へ変更できる。
+     */
     fun requestReview(id: Long) = db.transaction { conn ->
         conn.prepareStatement(
-            "UPDATE songs SET review_requested_at = COALESCE(review_requested_at, ?) WHERE id = ?"
+            "UPDATE songs SET status = ?, review_requested_at = COALESCE(review_requested_at, ?) WHERE id = ?"
         ).use { ps ->
-            ps.setLong(1, System.currentTimeMillis() / 1000)
-            ps.setLong(2, id)
+            ps.setInt(1, SongStatus.TEMP_OK.code)
+            ps.setLong(2, System.currentTimeMillis() / 1000)
+            ps.setLong(3, id)
             ps.executeUpdate()
         }
     }
@@ -142,13 +146,30 @@ class SongRepository(private val db: DatabaseManager) {
         }
     }
 
-    /** GUIフェーズで追加: 公開/非公開の独立フラグを切り替える（楽曲設定画面「公開」ボタン用）。 */
-    fun setPublished(id: Long, published: Boolean) = db.transaction { conn ->
-        conn.prepareStatement("UPDATE songs SET published = ? WHERE id = ?").use { ps ->
-            ps.setInt(1, if (published) 1 else 0)
+    /**
+     * 公開状態を更新し、初回公開時だけ true を返す。通知済み状態をDBへ永続化するため、
+     * 非公開→再公開やサーバー再起動後にも新曲通知が重複しない。
+     */
+    fun setPublishedAndClaimFirstAnnouncement(id: Long, published: Boolean): Boolean = db.transaction { conn ->
+        if (!published) {
+            conn.prepareStatement("UPDATE songs SET published = 0 WHERE id = ?").use { ps ->
+                ps.setLong(1, id)
+                ps.executeUpdate()
+            }
+            return@transaction false
+        }
+        val firstPublish = conn.prepareStatement("SELECT first_published_at FROM songs WHERE id = ?").use { ps ->
+            ps.setLong(1, id)
+            ps.executeQuery().use { rs -> rs.next() && rs.getObject(1) == null }
+        }
+        conn.prepareStatement(
+            "UPDATE songs SET published = 1, first_published_at = COALESCE(first_published_at, ?) WHERE id = ?"
+        ).use { ps ->
+            ps.setLong(1, System.currentTimeMillis() / 1000)
             ps.setLong(2, id)
             ps.executeUpdate()
         }
+        firstPublish
     }
 
     fun updateSettings(
@@ -175,18 +196,10 @@ class SongRepository(private val db: DatabaseManager) {
         }
     }
 
-    /** @return 加算後の総視聴回数（SQLiteのRETURNING句を利用して1クエリで取得） */
-    fun incrementViews(id: Long, by: Long = 1): Long = db.transaction { conn ->
-        conn.prepareStatement("UPDATE songs SET views = views + ? WHERE id = ? RETURNING views").use { ps ->
-            ps.setLong(1, by)
-            ps.setLong(2, id)
-            ps.executeQuery().use { rs -> if (rs.next()) rs.getLong("views") else 0L }
-        }
-    }
-
-    fun incrementLikes(id: Long, by: Long = 1) = db.transaction { conn ->
-        conn.prepareStatement("UPDATE songs SET likes = likes + ? WHERE id = ?").use { ps ->
-            ps.setLong(1, by)
+    /** 音源を差し替えた際に、立体音響の可否を録音内容へ合わせる。 */
+    fun updateAudioProperties(id: Long, supportsPositional: Boolean) = db.transaction { conn ->
+        conn.prepareStatement("UPDATE songs SET supports_positional = ? WHERE id = ?").use { ps ->
+            ps.setInt(1, if (supportsPositional) 1 else 0)
             ps.setLong(2, id)
             ps.executeUpdate()
         }

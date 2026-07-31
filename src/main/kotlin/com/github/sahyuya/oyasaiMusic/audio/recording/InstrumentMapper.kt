@@ -2,8 +2,6 @@ package com.github.sahyuya.oyasaiMusic.audio
 
 import org.bukkit.Instrument
 import org.bukkit.Sound
-import org.bukkit.block.Block
-import org.bukkit.block.data.type.NoteBlock
 import kotlin.math.pow
 
 /**
@@ -39,13 +37,4 @@ object InstrumentMapper {
     fun pitchToPlaybackPitch(pitch: Byte): Float =
         2.0.pow((pitch.coerceIn(0, 24) - 12) / 12.0).toFloat()
 
-    /**
-     * 指定ブロックがノートブロックであれば、その (楽器, 音階0-24) を返す。
-     * FAWEクリップボードの解析・動的録音・NotePlayEventの補完などで共通利用する。
-     */
-    fun readFromBlock(block: Block): Pair<Instrument, Byte>? {
-        val data = block.blockData
-        if (data !is NoteBlock) return null
-        return data.instrument to data.note.id
-    }
 }

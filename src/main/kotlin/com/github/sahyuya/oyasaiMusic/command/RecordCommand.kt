@@ -29,8 +29,7 @@ import java.util.UUID
  *   /record start <1-4>     動的録音の開始
  *   /record stop            動的録音の終了・保存
  *
- * GUIフェーズで追加: 録音完了（下書き保存）の直後、サヒュヤ氏の指示により
- * 楽曲設定画面([SongSettingsScreen])を自動的に開き、その場でタイトル等を設定できるようにする。
+ * 録音完了後は下書きを保存して[SongSettingsScreen]を開き、題名や公開設定を続けて編集できる。
  */
 class RecordCommand(
     private val plugin: OyasaiMusic,
@@ -39,7 +38,7 @@ class RecordCommand(
     private val audioDirectory: File,
     private val defaultRecordMaterial: String,
     private val defaultPrice: Int,
-    private val menuManager: MenuManager, // GUIフェーズで追加
+    private val menuManager: MenuManager,
 ) : CommandExecutor, TabCompleter {
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
@@ -182,10 +181,14 @@ class RecordCommand(
             return
         }
 
+        // 統合版プレイヤー名の識別用ピリオドは保存フォルダ名には含めない。
+        val authorDirectory = player.name.removePrefix(".")
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            .ifBlank { player.uniqueId.toString() }
         Bukkit.getScheduler().runTaskAsynchronously(
             plugin,
             Runnable {
-                val fileName = "${UUID.randomUUID()}.bin"
+                val fileName = "$authorDirectory/${UUID.randomUUID()}.bin"
                 val file = File(audioDirectory, fileName)
                 try {
                     SongAudioFile.write(file, notes)
@@ -201,7 +204,7 @@ class RecordCommand(
                         fileName = fileName,
                         supportsPositional = supportsPositional,
                     )
-                    // GUIフェーズで追加: 保存した楽曲を読み直し、楽曲設定画面を自動的に開く。
+                    // 保存済みの楽曲を読み直して設定画面へ渡す。
                     val savedSong = songRepository.findById(songId)
                     Bukkit.getScheduler().runTask(plugin, Runnable {
                         player.sendMessage(

@@ -1,10 +1,12 @@
 package com.github.sahyuya.oyasaiMusic.item
 
+import com.github.sahyuya.oyasaiMusic.gui.formattedSongTitle
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
+import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
 import org.bukkit.plugin.Plugin
@@ -29,13 +31,9 @@ enum class AmbientTrigger(val label: String) {
 }
 
 /**
- * UI/UX設計書9章「環境BGM用レコード: PDCに「再生範囲(16/64/256/全体)」「トリガー
- * (ジュークボックス/RS信号/接近)」「ループON/OFF」を保存。Shift+右クリックで設定画面
- * (ホッパーサイズ)を開く。」に対応する物理アイテムのPDC読み書きユーティリティ。
- *
- * 「レコードを購入」(楽曲詳細画面)で渡されるアイテムがそのままこの環境BGM用レコードを兼ねる
- * （個人視聴用と設置用を別アイテムにする設計も考えられるが、要件に明記が無いため
- * 同一アイテムとして扱っている。要確認）。
+ * 購入済みレコードのPDC読み書きを担当する。
+ * 楽曲ID・再生範囲・トリガー・ループ設定を1つのアイテムに保存し、購入用と環境BGM用を
+ * 同じレコードとして扱う。
  */
 object PhysicalRecordItem {
 
@@ -52,7 +50,7 @@ object PhysicalRecordItem {
         val item = ItemStack(material)
         item.editMeta { meta ->
             meta.displayName(
-                Component.text(title, NamedTextColor.AQUA)
+                formattedSongTitle(title)
                     .append(Component.text("  #$songId", NamedTextColor.DARK_GRAY))
                     .decoration(TextDecoration.ITALIC, false),
             )
@@ -62,6 +60,7 @@ object PhysicalRecordItem {
                     Component.text("Shift+右クリック: 環境BGM設定を開く", NamedTextColor.DARK_GRAY).decoration(TextDecoration.ITALIC, false),
                 ),
             )
+            meta.addItemFlags(ItemFlag.HIDE_ADDITIONAL_TOOLTIP)
             val pdc = meta.persistentDataContainer
             pdc.set(songIdKey(plugin), PersistentDataType.LONG, songId)
             pdc.set(rangeKey(plugin), PersistentDataType.STRING, AmbientRange.MEDIUM.name)

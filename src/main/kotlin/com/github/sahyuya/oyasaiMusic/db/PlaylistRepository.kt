@@ -48,16 +48,6 @@ class PlaylistRepository(private val db: DatabaseManager) {
         }
     }
 
-    fun findById(id: Long): Playlist? = db.transaction { conn ->
-        conn.prepareStatement(
-            "SELECT p.*, (SELECT COUNT(*) FROM playlist_songs ps WHERE ps.playlist_id = p.id) AS song_count " +
-                    "FROM playlists p WHERE p.id = ?"
-        ).use { ps ->
-            ps.setLong(1, id)
-            ps.executeQuery().use { rs -> if (rs.next()) rs.toPlaylist() else null }
-        }
-    }
-
     fun listByOwner(ownerUuid: UUID): List<Playlist> = db.transaction { conn ->
         conn.prepareStatement(
             "SELECT p.*, (SELECT COUNT(*) FROM playlist_songs ps WHERE ps.playlist_id = p.id) AS song_count " +
@@ -128,34 +118,6 @@ class PlaylistRepository(private val db: DatabaseManager) {
                 ps.setLong(3, id)
                 ps.executeUpdate()
             }
-        }
-    }
-
-    /**
-     * 指定した曲を1つ前/後の曲と順序を入れ替える（[reorderToPosition]の単純な特殊系として残置）。
-     */
-    fun moveSong(playlistId: Long, songId: Long, direction: Int) = db.transaction { conn ->
-        val positions = conn.prepareStatement(
-            "SELECT song_id, position FROM playlist_songs WHERE playlist_id = ? ORDER BY position ASC"
-        ).use { ps ->
-            ps.setLong(1, playlistId)
-            ps.executeQuery().use { rs ->
-                val list = mutableListOf<Pair<Long, Int>>()
-                while (rs.next()) list += rs.getLong("song_id") to rs.getInt("position")
-                list
-            }
-        }
-        val index = positions.indexOfFirst { it.first == songId }
-        val targetIndex = index + direction
-        if (index == -1 || targetIndex !in positions.indices) return@transaction
-
-        val (songA, posA) = positions[index]
-        val (songB, posB) = positions[targetIndex]
-        conn.prepareStatement("UPDATE playlist_songs SET position = ? WHERE playlist_id = ? AND song_id = ?").use { ps ->
-            ps.setInt(1, posB); ps.setLong(2, playlistId); ps.setLong(3, songA); ps.executeUpdate()
-        }
-        conn.prepareStatement("UPDATE playlist_songs SET position = ? WHERE playlist_id = ? AND song_id = ?").use { ps ->
-            ps.setInt(1, posA); ps.setLong(2, playlistId); ps.setLong(3, songB); ps.executeUpdate()
         }
     }
 

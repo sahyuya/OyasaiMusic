@@ -15,19 +15,11 @@ import org.bukkit.event.inventory.InventoryClickEvent
 import java.io.File
 
 /**
- * OP専用：審査・履歴管理GUI（UI/UX設計書 2章・4章・5章・8章）。
- * メインメニュー「③【OP専用】審査・履歴管理GUIへの入り口」から開く。
+ * OP用の審査・履歴管理画面。
+ * メインメニューの管理項目から開き、公開状態とは独立した審査状態を変更する。
  *
- * 並び順（UI/UX設計書4章）: 既定=新着順。他に未審査古い順/審査済新着順/古い順。
- *   「未審査古い順」は審査済を後方に分離、「審査済新着順」は未審査を後方に分離して表示。
- *
- * クリック動作（UI/UX設計書5章）:
- *   左クリック=再生 / Shift+左=詳細を開く / 右クリック=許可(要確認) / Shift+右=却下(要確認)
- * 「許可」は 未審査→仮OK→永続OK→未審査… の順に循環させる（要確認: 許可を1段階の操作として
- * まとめている。仮OK/永続OK個別にボタンを分けたい場合は要相談）。
- * 「却下」はShift+右クリックで直接設定する（要確認画面つき）。
- * 審査済のものはエンチャントモヤを付与し、Loreに判定結果を記載する（UI/UX設計書8章）。
- * 後からの判定修正も可能（何度でも許可/却下をクリックし直せる）。
+ * 右クリックは審査状態を循環し、Shift右クリックは二段階確認で却下する。
+ * 審査済みの楽曲には光沢と判定結果を表示し、後からの判定変更も許可する。
  */
 class AdminReviewScreen(
     private val plugin: OyasaiMusic,
@@ -36,9 +28,8 @@ class AdminReviewScreen(
 ) : BaseGridMenu(viewer, Component.text("審査・履歴管理")) {
 
     companion object {
-        const val PAGE_SIZE = 39 // 戻るボタン(slot37)を除いた枠数
-        private const val BACK_SLOT = 37
-        val SLOTS: List<Int> = ContentGrid.SLOTS.filter { it != BACK_SLOT }
+        const val PAGE_SIZE = 40
+        val SLOTS: List<Int> = ContentGrid.SLOTS
         private val AVAILABLE_SORTS = listOf(ReviewSort.NEWEST, ReviewSort.OLDEST, ReviewSort.UNREVIEWED_OLDEST_FIRST, ReviewSort.REVIEWED_NEWEST_FIRST)
     }
 
@@ -59,7 +50,7 @@ class AdminReviewScreen(
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         GuiChrome.render(inventory, null, state, sortLabel = "-", viewer = viewer, plugin = plugin, actionModeCategory = null)
         inventory.setItem(11, GuiItemBuilder(Material.BARRIER).name(Component.text("権限がありません", NamedTextColor.RED)).build())
-        inventory.setItem(BACK_SLOT, backButton())
+        inventory.setItem(ControllerSlots.PAGE_PREV, GuiChrome.backControllerButton())
     }
 
     private fun currentSort() = AVAILABLE_SORTS[sortIndex]
@@ -81,10 +72,8 @@ class AdminReviewScreen(
         SLOTS.forEachIndexed { index, slot ->
             inventory.setItem(slot, pageSongs.getOrNull(index)?.let(::songIcon))
         }
-        inventory.setItem(BACK_SLOT, backButton())
+        if (page == 0) inventory.setItem(ControllerSlots.PAGE_PREV, GuiChrome.backControllerButton())
     }
-
-    private fun backButton() = GuiItemBuilder(Material.ARROW).name(Component.text("戻る", NamedTextColor.WHITE)).build()
 
     private fun sortLabel(sort: ReviewSort): String = when (sort) {
         ReviewSort.NEWEST -> "新着順"
@@ -95,22 +84,26 @@ class AdminReviewScreen(
 
     private fun statusLabel(status: SongStatus): String = when (status) {
         SongStatus.DRAFT -> "未審査"
-        SongStatus.TEMP_OK -> "仮OK"
-        SongStatus.PERMANENT_OK -> "永続OK"
+        SongStatus.TEMP_OK -> "仮OK（申請済）"
+        SongStatus.PERMANENT_OK -> "許可"
         SongStatus.REJECTED -> "却下"
     }
 
     private fun songIcon(song: Song): org.bukkit.inventory.ItemStack {
-        val reviewed = song.status != SongStatus.DRAFT
+        val reviewed = song.status == SongStatus.PERMANENT_OK || song.status == SongStatus.REJECTED
         val confirming = pendingRejectId == song.id
         val authorName = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
         val lore = mutableListOf(
             Component.text("作者: $authorName", NamedTextColor.GRAY),
             Component.text("公開: ${if (song.published) "公開中" else "非公開"}", NamedTextColor.GRAY),
             Component.text("依頼: ${if (song.reviewRequestedAt != null) "あり" else "履歴のみ"}", NamedTextColor.GRAY),
-            Component.text("判定: ${statusLabel(song.status)}", if (reviewed) NamedTextColor.GREEN else NamedTextColor.YELLOW),
+            Component.text("判定: ${statusLabel(song.status)}", when (song.status) {
+                SongStatus.PERMANENT_OK -> NamedTextColor.GREEN
+                SongStatus.REJECTED -> NamedTextColor.RED
+                else -> NamedTextColor.YELLOW
+            }),
             Component.text("左:再生 Shift+左:詳細", NamedTextColor.DARK_GRAY),
-            Component.text("右:許可(循環) Shift+右:却下", NamedTextColor.DARK_GRAY),
+            Component.text("右:許可/未審査/却下を切替 Shift+右:却下", NamedTextColor.DARK_GRAY),
         )
         if (confirming) lore += Component.text("もう一度Shift+右クリックで却下確定", NamedTextColor.RED)
 
@@ -123,7 +116,7 @@ class AdminReviewScreen(
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        if (slot == BACK_SLOT) {
+        if (slot == ControllerSlots.PAGE_PREV && page == 0) {
             menuManager.openPrevious(viewer)
             return
         }
@@ -175,10 +168,11 @@ class AdminReviewScreen(
 
     private fun cycleApproval(song: Song) {
         val next = when (song.status) {
-            SongStatus.DRAFT -> SongStatus.TEMP_OK
+            // 申請直後の仮OKは、OPが最初に「許可」へ確定するための暫定状態。
             SongStatus.TEMP_OK -> SongStatus.PERMANENT_OK
             SongStatus.PERMANENT_OK -> SongStatus.DRAFT
-            SongStatus.REJECTED -> SongStatus.TEMP_OK
+            SongStatus.DRAFT -> SongStatus.REJECTED
+            SongStatus.REJECTED -> SongStatus.PERMANENT_OK
         }
         applyStatus(song, next)
     }

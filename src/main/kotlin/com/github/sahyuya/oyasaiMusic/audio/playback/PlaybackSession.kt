@@ -12,7 +12,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [PlaybackEngine.stop] で全スケジュール済みタスクをキャンセルできるよう、
  * スケジュールしたFutureを保持する。
  *
- * GUIフェーズで追加: 一時停止/再開（サヒュヤ氏の指示「一時停止、再生機能」）に対応するため、
  * 一時停止していない実質再生時間を [elapsedPlaybackMs] で追跡する。実際の
  * スケジュール操作（タスクのキャンセル・再スケジュール）は [PlaybackEngine] 側が行う。
  */
@@ -20,9 +19,6 @@ class PlaybackSession(
     val sessionId: UUID = UUID.randomUUID(),
     val song: Song,
     initialRecipients: Collection<Player>,
-    val startTimeMillis: Long = System.currentTimeMillis(),
-    /** ジュークボックス(環境音)再生かどうか。視聴回数カウント対象外の判定に使う（設計書7章）。 */
-    val isAmbientPlayback: Boolean = false,
 ) {
     val recipients: MutableSet<UUID> = CopyOnWriteArraySet(initialRecipients.map { it.uniqueId })
     internal val scheduledTasks: MutableList<ScheduledFuture<*>> = mutableListOf()
@@ -58,9 +54,5 @@ class PlaybackSession(
             scheduledTasks.forEach { it.cancel(false) }
             scheduledTasks.clear()
         }
-    }
-
-    fun removeRecipient(playerUuid: UUID) {
-        recipients.remove(playerUuid)
     }
 }

@@ -3,37 +3,23 @@ package com.github.sahyuya.oyasaiMusic.gui
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.model.Playlist
 import com.github.sahyuya.oyasaiMusic.model.Song
-import com.github.sahyuya.oyasaiMusic.util.BedrockUtil
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
-import org.bukkit.event.inventory.ClickType
 import org.bukkit.event.inventory.InventoryClickEvent
 
 /**
- * お気に入り/プレイリストの「登録楽曲一覧」画面（UI/UX設計書 5章・6章）。
- * 「詳細を開いた瞬間にリスト左上の曲を自動再生開始。以降は設定順に順次再生」に対応するため、
- * 画面を開いた時点で先頭曲の再生を開始し、再生完了ごとに次の曲へ自動的に進める
- * （シャッフルONの場合は次の曲をランダムに選ぶ。下段のシャッフル/ループボタンの状態を見る）。
- * 再生は[com.github.sahyuya.oyasaiMusic.gui.PlaybackController]に一本化している（他画面と同様の理由）。
+ * お気に入りまたはプレイリストに登録された楽曲の一覧画面。
+ * 開いた直後は先頭曲を再生し、その後はループ・シャッフル設定に従って進める。
  *
- * クリック動作（UI/UX設計書5章「お気に入り・プレイリスト (登録楽曲一覧)」）:
- *   左クリック=再生 / Shift+左=詳細を開く / 右クリック=並び替え(ドラッグ) / Shift+右=リストから除外(要確認)
+ * 曲順変更はアイテムをカーソルへ移さない二段階操作（右クリックで選択して移動先を右クリック）を
+ * 使用する。GUI外へのクリックでアイテムが実体化することを避けるためであり、並び順を持つ
+ * 実プレイリストだけで有効にする。
  *
- * 【並び替え(ドラッグ)の実装方式（要確認）】
- * サヒュヤ氏の要望により実際のドラッグ操作を実装したが、Bukkitのカーソル(掴み上げ)を
- * そのまま使う方式は、GUI外へのクリックでアイテムが実体化＝複製されてしまうリスクがあり、
- * この環境ではライブ検証ができないため採用していない。代わりに「右クリックで曲を選択
- * →別の曲を右クリックでそこへ挿入（同じ曲の再クリックでキャンセル）」という、実アイテムを
- * 一切動かさない安全な2クリック方式にしている。見た目はカーソルに乗らないが、
- * 選択中の曲が光る演出で「持ち上げている」ことを表現している。
- * お気に入り(favoritesテーブル)には並び順の概念が無いため、並び替えは実プレイリストのみ対応。
- *
- * このリストは左列タブから直接遷移する画面ではない（[FavoritesPlaylistsScreen]からの
- * ドリルダウン）ため、サヒュヤ氏指定の「戻る」ボタン対象3画面には含めていない
- * （緑タブを再クリックすれば一覧へ戻れるため）。
+ * 5×8の40枠をコンテンツに使い切るため、1ページ目の戻る操作は下段の
+ * 「前のページ」欄を矢印に置き換えて提供する。
  */
 class PlaylistDetailScreen private constructor(
     private val plugin: OyasaiMusic,
@@ -45,8 +31,9 @@ class PlaylistDetailScreen private constructor(
     companion object {
         // サヒュヤ氏の指示: 5×8フル(40スロット)、slot1(左上)から詰めて表示する。
         val SLOTS: List<Int> = ContentGrid.SLOTS
-        /** 曲間の間隔（サヒュヤ氏の指示: 約1秒。20tick=1000ms）。 */
-        private const val ADVANCE_DELAY_TICKS = 20L
+        private const val PAGE_SIZE = 40
+        /** 曲間の間隔: 0.75秒。 */
+        private const val ADVANCE_DELAY_TICKS = 15L
 
         fun forFavorites(plugin: OyasaiMusic, menuManager: MenuManager, viewer: Player) =
             PlaylistDetailScreen(plugin, menuManager, viewer, null)
@@ -56,6 +43,7 @@ class PlaylistDetailScreen private constructor(
     }
 
     private var songs: List<Song> = emptyList()
+    private var page = 0
     private var pendingRemoveSongId: Long? = null
     private var autoPlayIndex = 0
     private var draggingSongId: Long? = null
@@ -77,6 +65,7 @@ class PlaylistDetailScreen private constructor(
             }
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 songs = list
+                page = page.coerceAtMost(((songs.size - 1).coerceAtLeast(0)) / PAGE_SIZE)
                 render()
                 if (autoPlayFirst && songs.isNotEmpty()) playIndex(0)
             })
@@ -91,8 +80,9 @@ class PlaylistDetailScreen private constructor(
         )
 
         SLOTS.forEachIndexed { index, slot ->
-            songs.getOrNull(index)?.let { inventory.setItem(slot, songIcon(it, state)) }
+            inventory.setItem(slot, songs.getOrNull(page * PAGE_SIZE + index)?.let { songIcon(it, state) })
         }
+        if (page == 0) inventory.setItem(ControllerSlots.PAGE_PREV, GuiChrome.backControllerButton())
     }
 
     private fun songIcon(song: Song, state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
@@ -119,12 +109,11 @@ class PlaylistDetailScreen private constructor(
 
     override fun onClick(event: InventoryClickEvent) {
         val slot = event.rawSlot
-        val index = SLOTS.indexOf(slot)
+        val slotIndex = SLOTS.indexOf(slot)
+        val index = if (slotIndex == -1) -1 else page * PAGE_SIZE + slotIndex
 
-        // ドラッグ中は次のクリックを常に「ドロップ」として扱う。
-        // 実アイテム(カーソル)は一切動かさず内部状態(DBの並び順)だけを更新する安全な方式にしている
-        // （実カーソルでの掴み上げ方式は、GUI外へのクリックでアイテムが実体化＝複製されうるリスクが
-        // あり、この環境ではライブ検証ができないため採用していない。要確認）。
+        // 曲順変更中は、次のコンテンツクリックを移動先として処理する。
+        // アイテムをカーソルへ載せず、DB上の並び順だけを更新する。
         if (draggingSongId != null) {
             if (index != -1) dropDragged(index) else cancelDrag()
             return
@@ -133,6 +122,8 @@ class PlaylistDetailScreen private constructor(
         if (NavTabRouter.handle(slot, null, ActionModeCategory.PLAYLIST_DETAIL, plugin, menuManager, viewer)) return
 
         when (slot) {
+            ControllerSlots.PAGE_PREV -> if (page > 0) { page--; render() } else menuManager.openPrevious(viewer)
+            ControllerSlots.PAGE_NEXT -> if (songs.size > (page + 1) * PAGE_SIZE) { page++; render() }
             ControllerSlots.PREV_SONG -> {
                 if (songs.isEmpty()) return
                 val prevIndex = (autoPlayIndex - 1).let { if (it < 0) songs.size - 1 else it }
@@ -152,13 +143,7 @@ class PlaylistDetailScreen private constructor(
         if (song.id != pendingRemoveSongId) pendingRemoveSongId = null
 
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
-        val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, ActionModeCategory.PLAYLIST_DETAIL) else when (event.click) {
-            ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
-            ClickType.RIGHT -> ActionMode.TERTIARY
-            ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
-            else -> ActionMode.PRIMARY
-        }
+        val action = resolveActionMode(viewer, event, ActionModeCategory.PLAYLIST_DETAIL, prefix)
         when (action) {
             ActionMode.PRIMARY -> playIndex(index)
             ActionMode.SECONDARY -> openDetailsOrSettings(song)
@@ -258,12 +243,17 @@ class PlaylistDetailScreen private constructor(
      */
     private fun scheduleAdvance() {
         if (songs.isEmpty()) return
-        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-        val nextIndex = resolveNextIndex(state) ?: return
-        playIndex(nextIndex, delayTicks = ADVANCE_DELAY_TICKS)
+        pendingAdvanceTask?.cancel()
+        pendingAdvanceTask = Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            pendingAdvanceTask = null
+            // 曲間待機中に切り替えたループ/シャッフル設定を、ここで改めて反映する。
+            val nextIndex = resolveNextIndex(plugin.controllerStateService.stateFor(viewer.uniqueId)) ?: return@Runnable
+            playIndex(nextIndex)
+        }, ADVANCE_DELAY_TICKS)
     }
 
     private fun resolveNextIndex(state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): Int? {
+        if (state.loopMode == LoopMode.SINGLE) return autoPlayIndex
         if (state.shuffle) {
             if (songs.size == 1) return if (state.loopMode != LoopMode.OFF) 0 else null
             var next: Int
@@ -272,6 +262,6 @@ class PlaylistDetailScreen private constructor(
         }
         val nextIndex = autoPlayIndex + 1
         if (nextIndex < songs.size) return nextIndex
-        return if (state.loopMode != LoopMode.OFF) 0 else null
+        return if (state.loopMode == LoopMode.LIST) 0 else null
     }
 }

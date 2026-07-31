@@ -27,6 +27,8 @@ object GridRecorder {
         val pitch: Byte,
         val volume: Int,
         val pan: Int,
+        val customSound: String?,
+        val customSoundSeed: Long?,
     )
 
     /**
@@ -63,6 +65,7 @@ object GridRecorder {
                     overrideVolume?.let { volume = it }
                     overridePan?.let { pan = it }
                     val delayMs = SignOverrideProcessor.extractDelayFromWorldPos(world, pos, stepMs) ?: 0
+                    val customSound = SignOverrideProcessor.extractCustomSoundFromWorldPos(world, pos)
 
                     rawNotes += RawNote(
                         timeMs = baseTimeMs + delayMs,
@@ -70,6 +73,8 @@ object GridRecorder {
                         pitch = noteBlockData.note.id,
                         volume = volume,
                         pan = pan,
+                        customSound = customSound?.eventKey,
+                        customSoundSeed = customSound?.seed,
                     )
                 }
             }
@@ -78,7 +83,7 @@ object GridRecorder {
         // 音符間の相対タイミング（例: -1/16）を失わないようにする。
         val offsetMs = (-(rawNotes.minOfOrNull { it.timeMs } ?: 0)).coerceAtLeast(0)
         return rawNotes.map { raw ->
-            NoteEvent(raw.timeMs + offsetMs, raw.instrument, raw.pitch, raw.volume, raw.pan)
+            NoteEvent(raw.timeMs + offsetMs, raw.instrument, raw.pitch, raw.volume, raw.pan, raw.customSound, raw.customSoundSeed)
         }
     }
 

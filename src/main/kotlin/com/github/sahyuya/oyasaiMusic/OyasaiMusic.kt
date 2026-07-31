@@ -6,7 +6,10 @@ import com.github.sahyuya.oyasaiMusic.audio.PlaybackEngine
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
 import com.github.sahyuya.oyasaiMusic.audio.PlaybackModeService
 import com.github.sahyuya.oyasaiMusic.audio.RecordingSessionManager
+import com.github.sahyuya.oyasaiMusic.audio.SoundEffectService
+import com.github.sahyuya.oyasaiMusic.audio.VanillaSoundCatalog
 import com.github.sahyuya.oyasaiMusic.command.GetMusicPlayerCommand
+import com.github.sahyuya.oyasaiMusic.command.DemoSoundCommand
 import com.github.sahyuya.oyasaiMusic.command.MusicMenuCommand
 import com.github.sahyuya.oyasaiMusic.command.OyasaiMusicCommand
 import com.github.sahyuya.oyasaiMusic.command.RecordCommand
@@ -24,6 +27,8 @@ import com.github.sahyuya.oyasaiMusic.economy.EconomyService
 import com.github.sahyuya.oyasaiMusic.gui.MenuManager
 import com.github.sahyuya.oyasaiMusic.gui.PlaybackController
 import com.github.sahyuya.oyasaiMusic.gui.PlayerControllerStateService
+import com.github.sahyuya.oyasaiMusic.gui.ToastNotificationService
+import com.github.sahyuya.oyasaiMusic.model.Song
 import com.github.sahyuya.oyasaiMusic.item.PhysicalMusicPlayerItem
 import com.github.sahyuya.oyasaiMusic.item.PhysicalRecordListener
 import org.bukkit.Bukkit
@@ -33,13 +38,8 @@ import java.io.File
 /**
  * OyasaiMusic プラグインのエントリーポイント。
  *
- * 実装フェーズ方針（サヒュヤ氏との合意）:
- *   1. コア基盤（DB・音源フォーマット・録音/再生エンジン） ← 完了
- *   2. GUI（6×9 SPA構造の各画面） ← 本ファイルは着手フェーズ（GUIフェーズで追加した箇所は
- *      コメントで明示している）
- *
- * このクラスは各コンポーネントの初期化と依存関係の配線のみを担当し、
- * ロジック本体はそれぞれのクラスに委譲する。
+ * このクラスは設定・永続化・再生・GUI・コマンドを初期化し、依存関係を配線する。
+ * 楽曲処理の実装は各サービスへ委譲し、ここにはゲームロジックを置かない。
  */
 class OyasaiMusic : JavaPlugin() {
 
@@ -68,7 +68,6 @@ class OyasaiMusic : JavaPlugin() {
     lateinit var audioDirectory: File
         private set
 
-    // ---- GUIフェーズで追加 ----
     lateinit var rankingRepository: RankingRepository
         private set
     lateinit var rankingCacheService: RankingCacheService
@@ -82,6 +81,10 @@ class OyasaiMusic : JavaPlugin() {
     lateinit var ambientPlaybackRegistry: AmbientPlaybackRegistry
         private set
     lateinit var economyService: EconomyService
+        private set
+    lateinit var soundEffectService: SoundEffectService
+        private set
+    lateinit var toastNotificationService: ToastNotificationService
         private set
 
     override fun onEnable() {
@@ -97,6 +100,8 @@ class OyasaiMusic : JavaPlugin() {
 
         audioDirectory = File(dataFolder, config.getString("storage.audio-directory", "audio") ?: "audio")
         audioDirectory.mkdirs()
+        val soundCatalogCount = VanillaSoundCatalog.initialize(this)
+        logger.info("サウンドカタログを読み込みました: $soundCatalogCount SoundEvent")
 
         // --- DB初期化 ---
         databaseManager = DatabaseManager(this, config.getString("storage.database-file", "database.db") ?: "database.db")
@@ -104,22 +109,21 @@ class OyasaiMusic : JavaPlugin() {
         songRepository = SongRepository(databaseManager)
         userRepository = UserRepository(databaseManager)
         socialRepository = SocialRepository(databaseManager)
-        playlistRepository = PlaylistRepository(databaseManager) // GUIフェーズで追加
+        playlistRepository = PlaylistRepository(databaseManager)
         playbackPreferenceRepository = PlaybackPreferenceRepository(databaseManager)
         playbackModeService = PlaybackModeService(playbackPreferenceRepository)
-        rankingRepository = RankingRepository(databaseManager) // GUIフェーズで追加
+        rankingRepository = RankingRepository(databaseManager)
 
         // --- サービス層 ---
         configureRuntimeServices()
 
-        // ============ GUIフェーズで追加: 録音システムより前に用意する必要がある ============
-        // （RecordCommandが「録音完了後に楽曲設定画面を自動で開く」ためmenuManagerを必要とするため）
+        // 録音完了時に設定画面を開くため、録音コマンドより先にGUI基盤を初期化する。
         controllerStateService = PlayerControllerStateService()
         rankingCacheService = RankingCacheService(this, rankingRepository)
         rankingCacheService.start()
         menuManager = MenuManager(this)
         server.pluginManager.registerEvents(menuManager, this)
-        playbackController = PlaybackController(this, menuManager) // GUIフェーズで追加
+        playbackController = PlaybackController(this, menuManager)
         server.pluginManager.registerEvents(PhysicalMusicPlayerItem(this, menuManager), this)
         // ============================================================================
 
@@ -143,15 +147,17 @@ class OyasaiMusic : JavaPlugin() {
                 audioDirectory = audioDirectory,
                 defaultRecordMaterial = config.getString("recording.default-record-material", "MUSIC_DISC_13") ?: "MUSIC_DISC_13",
                 defaultPrice = config.getInt("recording.default-price", 1000),
-                menuManager = menuManager, // GUIフェーズで追加: 録音完了後に楽曲設定画面を自動で開く
+                menuManager = menuManager,
             )
             cmd.setExecutor(executor)
             cmd.tabCompleter = executor
         } ?: logger.warning("recordコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
         playbackEngine = createPlaybackEngine()
+        soundEffectService = SoundEffectService(this)
+        soundEffectService.initialize()
+        toastNotificationService = ToastNotificationService(this)
 
-        // ============ ここから GUIフェーズで追加（コマンド登録） ============
         getCommand("musicmenu")?.let { cmd ->
             val executor = MusicMenuCommand(this)
             cmd.setExecutor(executor)
@@ -170,14 +176,18 @@ class OyasaiMusic : JavaPlugin() {
             cmd.tabCompleter = executor
         } ?: logger.warning("oyasaimusicコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
-        // ---- 環境BGM用レコード（UI/UX設計書9章） ----
+        getCommand("demosound")?.let { cmd ->
+            val executor = DemoSoundCommand()
+            cmd.setExecutor(executor)
+            cmd.tabCompleter = executor
+        } ?: logger.warning("demosoundコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+
+        // 環境BGMレコードのトリガー監視。
         ambientPlaybackRegistry = AmbientPlaybackRegistry(this)
         server.pluginManager.registerEvents(PhysicalRecordListener(this), this)
-        // 接近トリガーの判定・範囲内リスナーの追従のため1秒ごとに巡回する。
-        Bukkit.getScheduler().runTaskTimer(this, Runnable { ambientPlaybackRegistry.tick() }, 20L, 20L)
-        // ============ GUIフェーズ追加ここまで ============
-
-        logger.info("OyasaiMusic (GUIフェーズ着手) を有効化しました。")
+        // RSトリガーの短いパルスも取りこぼさないよう、0.1秒ごとに状態を確認する。
+        Bukkit.getScheduler().runTaskTimer(this, Runnable { ambientPlaybackRegistry.tick() }, 2L, 2L)
+        logger.info("OyasaiMusic を有効化しました。")
     }
 
     override fun onDisable() {
@@ -190,12 +200,20 @@ class OyasaiMusic : JavaPlugin() {
     /** `/oyasaimusic reload` 用。設定値を参照するサービスを現在のconfigで再構成する。 */
     fun reloadRuntimeConfiguration() {
         reloadConfig()
+        val soundCatalogCount = VanillaSoundCatalog.reload(this)
+        logger.info("サウンドカタログを再読み込みしました: $soundCatalogCount SoundEvent")
         configureRuntimeServices()
         if (::playbackEngine.isInitialized) {
             val previous = playbackEngine
             playbackEngine = createPlaybackEngine()
             previous.shutdown()
         }
+    }
+
+    /** 楽曲設定の保存直後に、再生中表示と全プレイヤーの開いているGUIへ最新値を反映する。 */
+    fun applySongUpdate(updatedSong: Song) {
+        playbackController.applySongMetadataUpdate(updatedSong)
+        menuManager.refreshForSongUpdate(updatedSong)
     }
 
     private fun configureRuntimeServices() {
@@ -211,7 +229,10 @@ class OyasaiMusic : JavaPlugin() {
             dayLimit = config.getInt("playback.view-limit-per-day", 10),
             viewsPerPoint = config.getInt("playback.views-per-point", 10),
         )
-        economyService = EconomyService(this, config.getString("economy.points-command", "") ?: "")
+        // 既存のconfig.ymlが空欄のままでも、標準のTokenManagerコマンドでポイントを付与する。
+        val pointCommand = config.getString("economy.points-command", "").orEmpty()
+            .ifBlank { "tokenmanager add %player% %points%" }
+        economyService = EconomyService(this, pointCommand)
     }
 
     private fun createPlaybackEngine(): PlaybackEngine {

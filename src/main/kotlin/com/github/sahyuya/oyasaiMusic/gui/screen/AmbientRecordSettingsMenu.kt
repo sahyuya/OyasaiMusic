@@ -19,10 +19,9 @@ import org.bukkit.inventory.Inventory
  */
 class AmbientRecordSettingsMenu(
     private val plugin: OyasaiMusic,
-    private val menuManager: MenuManager,
     override val viewer: Player,
     private val handSlot: Int,
-) : OyasaiMenu {
+) : OyasaiMusicMenu {
 
     companion object {
         private const val RANGE_SLOT = 0
@@ -32,7 +31,7 @@ class AmbientRecordSettingsMenu(
         private const val CLOSE_SLOT = 4
     }
 
-    override val inventory: Inventory = Bukkit.createInventory(OyasaiMenuHolder(this), InventoryType.HOPPER, Component.text("環境BGM設定"))
+    override val inventory: Inventory = Bukkit.createInventory(OyasaiMusicMenuHolder(this), InventoryType.HOPPER, Component.text("環境BGM設定"))
 
     init { render() }
 

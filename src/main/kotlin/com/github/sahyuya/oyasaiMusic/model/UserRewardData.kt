@@ -11,4 +11,7 @@ data class UserRewardData(
     val uuid: UUID,
     val pendingMoney: Long = 0,
     val pendingPoints: Long = 0,
+    /** 外部経済/ポイント基盤へ実際に付与済みの累計。 */
+    val totalMoney: Long = 0,
+    val totalPoints: Long = 0,
 )

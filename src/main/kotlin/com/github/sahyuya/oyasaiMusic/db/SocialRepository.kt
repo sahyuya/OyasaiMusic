@@ -13,19 +13,6 @@ class SocialRepository(private val db: DatabaseManager) {
 
     // ---------- いいね ----------
 
-    /** @return true = 新規にいいねを登録できた / false = 既にいいね済みだった */
-    fun addLike(userUuid: UUID, songId: Long): Boolean = db.transaction { conn ->
-        conn.prepareStatement(
-            "INSERT INTO song_likes (user_uuid, song_id, created_at) VALUES (?, ?, ?) " +
-                    "ON CONFLICT(user_uuid, song_id) DO NOTHING"
-        ).use { ps ->
-            ps.setBytes(1, UuidUtil.toBytes(userUuid))
-            ps.setLong(2, songId)
-            ps.setLong(3, System.currentTimeMillis() / 1000)
-            ps.executeUpdate() > 0
-        }
-    }
-
     /**
      * いいね登録・曲の統計・双方の報酬残高を一括で更新する。
      * UNIQUE制約により重複いいねの場合は、以降の更新を一切行わない。
@@ -167,51 +154,6 @@ class SocialRepository(private val db: DatabaseManager) {
 
     // ---------- 視聴履歴（回数制限判定用） ----------
 
-    fun recordView(userUuid: UUID, songId: Long, timestamp: Long = System.currentTimeMillis() / 1000) =
-        db.transaction { conn ->
-            conn.prepareStatement(
-                "INSERT INTO view_history (user_uuid, song_id, timestamp) VALUES (?, ?, ?)"
-            ).use { ps ->
-                ps.setBytes(1, UuidUtil.toBytes(userUuid))
-                ps.setLong(2, songId)
-                ps.setLong(3, timestamp)
-                ps.executeUpdate()
-            }
-        }
-
-    /**
-     * 視聴上限を確認してから履歴追加までを同じDBロック内で行う。
-     * 個別の count/insert を別トランザクションにすると、同時に終了した複数再生が上限を
-     * すり抜けるため、このメソッドを視聴記録の入口として使う。
-     */
-    fun tryRecordViewWithinLimits(
-        userUuid: UUID,
-        songId: Long,
-        timestamp: Long,
-        hourLimit: Int,
-        dayLimit: Int,
-    ): Boolean = db.transaction { conn ->
-        val uuidBytes = UuidUtil.toBytes(userUuid)
-        fun countSince(since: Long): Long = conn.prepareStatement(
-            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ? AND timestamp >= ?"
-        ).use { ps ->
-            ps.setBytes(1, uuidBytes)
-            ps.setLong(2, songId)
-            ps.setLong(3, since)
-            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
-        }
-        if (countSince(timestamp - 3600) >= hourLimit || countSince(timestamp - 86_400) >= dayLimit) {
-            return@transaction false
-        }
-        conn.prepareStatement("INSERT INTO view_history (user_uuid, song_id, timestamp) VALUES (?, ?, ?)").use { ps ->
-            ps.setBytes(1, uuidBytes)
-            ps.setLong(2, songId)
-            ps.setLong(3, timestamp)
-            ps.executeUpdate()
-        }
-        true
-    }
-
     /**
      * 視聴履歴・総再生数・条件付きポイント報酬を一つのトランザクションで更新する。
      * @return true のときだけ視聴として計上された。
@@ -267,28 +209,4 @@ class SocialRepository(private val db: DatabaseManager) {
         }
     }
 
-    /**
-     * データ・システム設計書 1-3章の視聴制限ロジック用に、
-     * 指定時刻より後の再生回数（直近1時間・24時間の判定に使用）を数える。
-     */
-    fun countViewsSince(userUuid: UUID, songId: Long, sinceEpochSeconds: Long): Long = db.transaction { conn ->
-        conn.prepareStatement(
-            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ? AND timestamp >= ?"
-        ).use { ps ->
-            ps.setBytes(1, UuidUtil.toBytes(userUuid))
-            ps.setLong(2, songId)
-            ps.setLong(3, sinceEpochSeconds)
-            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
-        }
-    }
-
-    fun countTotalViews(userUuid: UUID, songId: Long): Long = db.transaction { conn ->
-        conn.prepareStatement(
-            "SELECT COUNT(*) FROM view_history WHERE user_uuid = ? AND song_id = ?"
-        ).use { ps ->
-            ps.setBytes(1, UuidUtil.toBytes(userUuid))
-            ps.setLong(2, songId)
-            ps.executeQuery().use { rs -> rs.next(); rs.getLong(1) }
-        }
-    }
 }

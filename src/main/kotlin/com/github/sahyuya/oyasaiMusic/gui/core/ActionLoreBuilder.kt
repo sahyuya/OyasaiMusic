@@ -39,11 +39,21 @@ object ActionLoreBuilder {
             )
         } else {
             listOf(
-                Component.text("左クリック: ", NamedTextColor.GRAY).append(Component.text(primary, NamedTextColor.GREEN))
-                    .append(Component.text("  Shift+左クリック: ", NamedTextColor.GRAY)).append(Component.text(secondary, NamedTextColor.AQUA)),
-                Component.text("右クリック: ", NamedTextColor.GRAY).append(Component.text(tertiary, NamedTextColor.GOLD))
-                    .append(Component.text("  Shift+右クリック: ", NamedTextColor.GRAY)).append(Component.text(quaternary, NamedTextColor.LIGHT_PURPLE)),
+                clickAction("左クリック", primary)
+                    .append(Component.text("  ", NamedTextColor.DARK_GRAY))
+                    .append(clickAction("右クリック", tertiary)),
+                clickAction("Shift左クリック", secondary)
+                    .append(Component.text("  ", NamedTextColor.DARK_GRAY))
+                    .append(clickAction("Shift右クリック", quaternary)),
             )
         }
+    }
+
+    /** 実行できる操作は金色、未割当(`-`/空文字)は「なし」を含め灰色で表示する。 */
+    private fun clickAction(clickName: String, action: String): Component {
+        val available = action.isNotBlank() && action != "-"
+        val color = if (available) NamedTextColor.GOLD else NamedTextColor.GRAY
+        return Component.text("$clickName: ", NamedTextColor.GRAY)
+            .append(Component.text(if (available) action else "なし", color))
     }
 }

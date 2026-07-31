@@ -2,34 +2,17 @@ package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.model.Playlist
-import com.github.sahyuya.oyasaiMusic.util.BedrockUtil
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
-import org.bukkit.event.inventory.ClickType
 import org.bukkit.event.inventory.InventoryClickEvent
 
 /**
- * ④ お気に入り♪プレイリスト一覧画面（左列緑タブ、UI/UX設計書 2章、参照画像4枚目）。
- * 先頭に固定で「お気に入り」（[com.github.sahyuya.oyasaiMusic.db.SocialRepository]のfavoritesテーブルを
- * 使う特別な擬似プレイリスト）、続けてプレイリスト一覧（[com.github.sahyuya.oyasaiMusic.db.PlaylistRepository]）、
- * 末尾に「新規作成」ボタンを表示する。
- *
- * 背景装飾は使わない（サヒュヤ氏の指示: 緑板ガラス枠を廃止し、全楽曲一覧等と同じ
- * 5×8フル表示・左上(slot1)から詰めて並べる表示に統一）。
- *
- * クリック動作はUI/UX設計書 5章「お気に入り・プレイリスト (リスト画面)」に準拠:
- *   左クリック=詳細を開く＆自動再生 / Shift+左=共有 / 右クリック=名前変更 / Shift+右=削除(要確認)
- * 「お気に入り」自体は名前変更・削除ができないため、左クリック以外は無効化する。
- *
- * 【不具合修正】プレイリスト名の変更後にGUIへ戻らず閉じてしまう件について:
- * `AnvilTextInputSession` はMenuManagerを介さず直接GUIを閉じるため、その完了コールバック内で
- * 単に画面の中身を再描画([render])するだけでは、既に閉じられてしまったGUIを
- * プレイヤーへ再表示することにはならない。[reload] の最後で必ず
- * `menuManager.open(viewer, this, false)` を呼び、Anvil入力を経由したかどうかに関わらず
- * 確実にGUIが表示された状態に戻るようにしている。
+ * お気に入りとプレイリストを表示・管理する画面。
+ * 先頭は固定のお気に入り、末尾は新規作成で、プレイリストには共有・名前変更・削除を提供する。
+ * 金床入力後も画面を再表示するため、非同期の再読込完了時にこのメニューを開き直す。
  */
 class FavoritesPlaylistsScreen(
     private val plugin: OyasaiMusic,
@@ -133,13 +116,7 @@ class FavoritesPlaylistsScreen(
         if (playlist.id != pendingDeletePlaylistId) pendingDeletePlaylistId = null
 
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
-        val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = if (isBedrock) BedrockActionModeService.get(viewer.uniqueId, ActionModeCategory.PLAYLIST_LIST) else when (event.click) {
-            ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
-            ClickType.RIGHT -> ActionMode.TERTIARY
-            ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
-            else -> ActionMode.PRIMARY
-        }
+        val action = resolveActionMode(viewer, event, ActionModeCategory.PLAYLIST_LIST, prefix)
         when (action) {
             ActionMode.PRIMARY -> menuManager.open(viewer, PlaylistDetailScreen.forPlaylist(plugin, menuManager, viewer, playlist))
             ActionMode.SECONDARY -> sharePlaylist(playlist)

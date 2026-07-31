@@ -51,6 +51,4 @@ data class Song(
     fun isMonetizationEligible(): Boolean =
         referenceUrl != null || status == SongStatus.TEMP_OK || status == SongStatus.PERMANENT_OK
 
-    /** 一覧・検索等の対象として表示してよいか。GUIフェーズより[published]フラグで判定する。 */
-    fun isPublished(): Boolean = published
 }

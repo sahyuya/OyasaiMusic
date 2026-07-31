@@ -11,14 +11,12 @@ import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockRedstoneEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
+import org.bukkit.block.BlockFace
 
 /**
- * UI/UX設計書9章「環境BGM用レコード」のインタラクション処理。
- *
- * このアイテムはバニラの音楽レコードではなく独自形式の楽曲データを指すため、ジュークボックスへの
- * 設置・取り出しはバニラの挿入処理をキャンセルしたうえで独自に模擬している
- * （[com.github.sahyuya.oyasaiMusic.audio.AmbientPlaybackRegistry]参照。要確認: 見た目上
- * ジュークボックスの中身は常に空のままになる点は妥協点）。
+ * 環境BGMレコードの設置・回収・設定画面表示を処理する。
+ * 独自音源はバニラのジュークボックス再生では扱えないため、設置処理をキャンセルし、
+ * [com.github.sahyuya.oyasaiMusic.audio.AmbientPlaybackRegistry]へ再生を委譲する。
  */
 class PhysicalRecordListener(private val plugin: OyasaiMusic) : Listener {
 
@@ -68,9 +66,10 @@ class PhysicalRecordListener(private val plugin: OyasaiMusic) : Listener {
                 "§a環境BGMを設置しました: ${song.title} " +
                         "(範囲:${range.label} / トリガー:${trigger.label} / ループ:${if (loop) "ON" else "OFF"})",
             )
-            if (player.gameMode != GameMode.CREATIVE) {
-                item.amount -= 1
-            }
+            // 独自レコードはバニラのジュークボックス内部には保存していないため、ゲームモードを
+            // 問わず手元の実体を消費する。クリエイティブで残すと取り出し時に複製できてしまう。
+            item.amount -= 1
+            player.updateInventory()
             return
         }
 
@@ -78,18 +77,27 @@ class PhysicalRecordListener(private val plugin: OyasaiMusic) : Listener {
         if (player.isSneaking && (event.action == Action.RIGHT_CLICK_AIR || event.action == Action.RIGHT_CLICK_BLOCK)) {
             if (clickedBlock?.type == Material.JUKEBOX) return // ジュークボックスへの設置操作を優先
             event.isCancelled = true
-            plugin.menuManager.open(
+            plugin.menuManager.openTransient(
                 player,
-                AmbientRecordSettingsMenu(plugin, plugin.menuManager, player, player.inventory.heldItemSlot),
-                rememberAsPrevious = false,
+                AmbientRecordSettingsMenu(plugin, player, player.inventory.heldItemSlot),
             )
         }
     }
 
     @EventHandler
     fun onRedstone(event: BlockRedstoneEvent) {
-        if (event.block.type != Material.JUKEBOX) return
-        plugin.ambientPlaybackRegistry.onRedstoneChange(event.block.location, event.newCurrent > 0)
+        // 実際にはジュークボックス自身ではなく、隣接ダスト/リピーターにイベントが出ることが多い。
+        // 次tickで通電状態を再評価し、更新途中の電力値も避ける。
+        val candidates = buildList {
+            add(event.block)
+            BlockFace.entries.filter { it != BlockFace.SELF }.forEach { add(event.block.getRelative(it)) }
+        }.filter { it.type == Material.JUKEBOX }
+        if (candidates.isEmpty()) return
+        org.bukkit.Bukkit.getScheduler().runTask(plugin, Runnable {
+            candidates.forEach { jukebox ->
+                plugin.ambientPlaybackRegistry.onRedstoneChange(jukebox.location, jukebox.isBlockPowered)
+            }
+        })
     }
 
     @EventHandler

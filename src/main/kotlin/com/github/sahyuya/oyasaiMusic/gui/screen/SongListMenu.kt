@@ -3,14 +3,12 @@ package com.github.sahyuya.oyasaiMusic.gui
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.db.SongSort
 import com.github.sahyuya.oyasaiMusic.model.Song
-import com.github.sahyuya.oyasaiMusic.util.BedrockUtil
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.entity.Player
-import org.bukkit.event.inventory.ClickType
 import org.bukkit.event.inventory.InventoryClickEvent
 
 private val SONG_ID_KEY = NamespacedKey("oyasaimusic", "song_id")
@@ -76,6 +74,8 @@ class SongListMenu(
         LIST_SLOTS.forEachIndexed { index, slot ->
             inventory.setItem(slot, pageSongs.getOrNull(index)?.let { songIcon(it, state) })
         }
+        // 検索結果・作者作品一覧は40枠をすべて使うため、1ページ目ではページ戻り欄を戻るにする。
+        if (ownTab == null && page == 0) inventory.setItem(ControllerSlots.PAGE_PREV, GuiChrome.backControllerButton())
     }
 
     private fun songIcon(song: Song, state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
@@ -90,7 +90,7 @@ class SongListMenu(
             lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-")
             if (nowPlaying) lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
             return GuiItemBuilder(Material.DISC_FRAGMENT_5)
-                .name(Component.text("[下書き] ", NamedTextColor.GRAY).append(songTitle(song, NamedTextColor.GRAY)))
+                .name(Component.text("[下書き] ", NamedTextColor.GRAY).append(songTitle(song)))
                 .lore(lore)
                 .glint(nowPlaying)
                 .tag(SONG_ID_KEY, (song.id ?: -1).toString())
@@ -128,7 +128,7 @@ class SongListMenu(
                 page = 0
                 reload()
             }
-            ControllerSlots.PAGE_PREV -> if (page > 0) { page--; reload() }
+            ControllerSlots.PAGE_PREV -> if (page > 0) { page--; reload() } else if (ownTab == null) menuManager.openPrevious(viewer)
             ControllerSlots.PAGE_NEXT -> if (pageSongs.size == PAGE_SIZE) { page++; reload() }
             else -> if (slot in LIST_SLOTS) handleSongClick(event, slot)
         }
@@ -138,8 +138,11 @@ class SongListMenu(
         val index = LIST_SLOTS.indexOf(slot)
         val song = pageSongs.getOrNull(index) ?: return
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
-        val isBedrock = BedrockUtil.isBedrock(viewer, prefix)
-        val action = resolveAction(event, isBedrock)
+        val action = resolveActionMode(viewer, event, ActionModeCategory.SONG_LIST, prefix)
+        if (!song.published && action in setOf(ActionMode.TERTIARY, ActionMode.QUATERNARY)) {
+            GuiFeedback.invalid(viewer, "非公開の楽曲にはいいね・お気に入り追加はできません")
+            return
+        }
         when (action) {
             ActionMode.PRIMARY -> playSong(song)
             ActionMode.SECONDARY -> {
@@ -155,27 +158,30 @@ class SongListMenu(
         }
     }
 
-    private fun resolveAction(event: InventoryClickEvent, isBedrock: Boolean): ActionMode {
-        if (isBedrock) return BedrockActionModeService.get(viewer.uniqueId, ActionModeCategory.SONG_LIST)
-        return when (event.click) {
-            ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
-            ClickType.RIGHT -> ActionMode.TERTIARY
-            ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
-            else -> ActionMode.PRIMARY
-        }
-    }
-
     private fun likeSong(song: Song) {
+        if (!song.published) {
+            GuiFeedback.invalid(viewer, "非公開の楽曲にはいいねできません")
+            return
+        }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
             val added = plugin.likeService.like(viewer.uniqueId, song)
             Bukkit.getScheduler().runTask(plugin, Runnable {
-                viewer.sendMessage(if (added) "§aいいねしました: ${song.title}" else "§7既にいいね済みです。")
-                if (added) reload()
+                if (added) {
+                    GuiFeedback.info(viewer, "いいねしました: ${song.title}", NamedTextColor.GREEN)
+                    Bukkit.getPlayer(song.authorUuid)?.let { author ->
+                        plugin.toastNotificationService.showLikeReceived(author, song.title, viewer.name)
+                    }
+                    reload()
+                } else GuiFeedback.invalid(viewer, "既にいいね済みです。")
             })
         })
     }
 
     private fun favoriteSong(song: Song) {
+        if (!song.published) {
+            GuiFeedback.invalid(viewer, "非公開の楽曲は追加できません")
+            return
+        }
         menuManager.open(viewer, PlaylistSelectionScreen(plugin, menuManager, viewer, song))
     }
 
@@ -194,6 +200,11 @@ class SongListMenu(
     }
 
     private fun handleAutoAdvance(justFinished: Song) {
+        plugin.playbackController.scheduleTrackTransition(viewer) { handleAutoAdvanceAfterCooldown(justFinished) }
+    }
+
+    /** クールタイム後に状態を読むため、待機中のループ/シャッフル切替も即時反映される。 */
+    private fun handleAutoAdvanceAfterCooldown(justFinished: Song) {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         when {
             state.loopMode == LoopMode.SINGLE -> playSong(justFinished)

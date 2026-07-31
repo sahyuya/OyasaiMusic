@@ -23,7 +23,7 @@ class PlayerHeadListMenu(
     viewer: Player,
     title: String,
     private val uuids: List<UUID>,
-    private val onSelect: (UUID, String) -> OyasaiMenu,
+    private val onSelect: (UUID, String) -> OyasaiMusicMenu,
 ) : BaseGridMenu(viewer, Component.text(title)) {
 
     companion object {
@@ -50,6 +50,7 @@ class PlayerHeadListMenu(
                 inventory.setItem(SLOTS[index], item)
             }
         }
+        if (page == 0) inventory.setItem(ControllerSlots.PAGE_PREV, GuiChrome.backControllerButton())
     }
 
     override fun onClick(event: InventoryClickEvent) {
@@ -57,7 +58,7 @@ class PlayerHeadListMenu(
         if (NavTabRouter.handle(slot, null, null, plugin, menuManager, viewer)) return
         if (plugin.playbackController.handleControllerClick(slot, viewer)) return
         when (slot) {
-            ControllerSlots.PAGE_PREV -> if (page > 0) { page--; render() }
+            ControllerSlots.PAGE_PREV -> if (page > 0) { page--; render() } else menuManager.openPrevious(viewer)
             ControllerSlots.PAGE_NEXT -> if (uuids.size > (page + 1) * PAGE_SIZE) { page++; render() }
             else -> {
                 val index = SLOTS.indexOf(slot)

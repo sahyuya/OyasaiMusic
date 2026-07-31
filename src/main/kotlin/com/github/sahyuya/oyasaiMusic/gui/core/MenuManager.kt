@@ -1,6 +1,7 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
+import com.github.sahyuya.oyasaiMusic.model.Song
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
@@ -15,22 +16,9 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * GUI全体のライフサイクル（開閉・履歴・クリックの委譲）を一元管理する。
  *
- * 【履歴管理（サヒュヤ氏の指示で改訂）】
- * 当初は「1階層のみ」記憶する単純な`previous`参照だったが、
- * 楽曲一覧→楽曲詳細→楽曲設定のように複数階層を辿った場合でも「戻る」で
- * 最初の画面まで戻れるようにしてほしいとの指示を受け、[history] をスタックに変更した。
- * また、何らかの理由でスタックが空になっていた場合（＝履歴を見失った場合）は、
- * 「戻る」を押しても何も起きない事態を避けるため、トップメニュー([MainMenuScreen])へ
- * フォールバックする。
- *
- * UI/UX設計書 9章:「携帯用プレイヤー」右クリックで前回開いていたGUIを復元するため、
- * [lastKnown] はGUIを閉じても消さずに保持し続ける（[current] は開いている間だけ）。
- *
- * 【不具合修正】「戻る」ボタンが効かない件について:
- * `AnvilTextInputSession` や `BookQuillUrlInput` はMenuManagerを介さず直接
- * `player.openInventory(...)` を呼ぶため、その際にも（元のGUIが暗黙的に閉じられることで）
- * `InventoryCloseEvent` が発生する。これによって履歴が失われないよう、GUIを閉じた程度では
- * [current]/[history] を破棄しない設計にしている（掃除はプレイヤー退出時のみ）。
+ * [history] はドリルダウン画面の戻り先をスタックで保持し、空のときはトップメニューへ戻す。
+ * [lastKnown] は携帯プレイヤーから直前の画面を復元するため、通常の画面クローズでは消去しない。
+ * 金床・本入力は一時的に別のインベントリを開くため、状態の破棄はプレイヤー退出時だけに限定する。
  */
 class MenuManager(private val plugin: OyasaiMusic) : Listener {
 
@@ -39,22 +27,29 @@ class MenuManager(private val plugin: OyasaiMusic) : Listener {
         private const val CLICK_COOLDOWN_MS = 200L
     }
 
-    private val current = ConcurrentHashMap<UUID, OyasaiMenu>()
-    private val history = ConcurrentHashMap<UUID, MutableList<OyasaiMenu>>()
-    private val lastKnown = ConcurrentHashMap<UUID, OyasaiMenu>()
+    private val current = ConcurrentHashMap<UUID, OyasaiMusicMenu>()
+    private val history = ConcurrentHashMap<UUID, MutableList<OyasaiMusicMenu>>()
+    private val lastKnown = ConcurrentHashMap<UUID, OyasaiMusicMenu>()
     private val lastClickMillis = ConcurrentHashMap<UUID, Long>()
 
     /**
      * @param rememberAsPrevious trueの場合、直前に開いていた画面を履歴スタックへ積む。
      *        「戻る」自体で呼ぶ場合や、メインメニューへ戻る等で履歴をリセットしたい遷移ではfalseにする。
      */
-    fun open(player: Player, menu: OyasaiMenu, rememberAsPrevious: Boolean = true) {
+    fun open(player: Player, menu: OyasaiMusicMenu, rememberAsPrevious: Boolean = true) {
         val existing = current[player.uniqueId]
         if (rememberAsPrevious && existing != null && existing !== menu) {
             history.getOrPut(player.uniqueId) { mutableListOf() }.add(existing)
         }
         current[player.uniqueId] = menu
         lastKnown[player.uniqueId] = menu
+        player.openInventory(menu.inventory)
+    }
+
+    /**
+     * 一時設定画面用。クリック委譲は通常どおり行うが、携帯プレイヤーが復元する画面や履歴には残さない。
+     */
+    fun openTransient(player: Player, menu: OyasaiMusicMenu) {
         player.openInventory(menu.inventory)
     }
 
@@ -75,9 +70,7 @@ class MenuManager(private val plugin: OyasaiMusic) : Listener {
     }
 
     /** UI/UX設計書9章「携帯用プレイヤー」右クリック用：GUIを閉じていても直前の画面を返す。 */
-    fun lastKnownMenu(playerUuid: UUID): OyasaiMenu? = lastKnown[playerUuid]
-
-    fun currentMenu(playerUuid: UUID): OyasaiMenu? = current[playerUuid]
+    fun lastKnownMenu(playerUuid: UUID): OyasaiMusicMenu? = lastKnown[playerUuid]
 
     /**
      * 現在開いている画面を再描画する（例: 再生中/一時停止状態が変わった、いいねやフォローの
@@ -88,9 +81,19 @@ class MenuManager(private val plugin: OyasaiMusic) : Listener {
         current[playerUuid]?.refresh()
     }
 
+    /**
+     * 楽曲設定が保存された直後に、開いている全GUIへ最新情報を配信する。
+     * 一覧系は再読込、詳細・設定画面は同一IDの曲だけをその場で差し替える。
+     */
+    fun refreshForSongUpdate(updatedSong: Song) {
+        current.values.toSet().forEach { menu ->
+            if (menu is SongUpdateAware) menu.onSongUpdated(updatedSong) else menu.refresh()
+        }
+    }
+
     @EventHandler(priority = EventPriority.HIGH)
     fun onClick(event: InventoryClickEvent) {
-        val holder = event.inventory.holder as? OyasaiMenuHolder ?: return
+        val holder = event.inventory.holder as? OyasaiMusicMenuHolder ?: return
         // GUI欄・プレイヤーインベントリ側どちらのクリックでも既定では持ち出し不可にする。
         // 画面側が明示的にfalseへ戻さない限りアイテムの移動は起きない。
         event.isCancelled = true
@@ -106,12 +109,12 @@ class MenuManager(private val plugin: OyasaiMusic) : Listener {
 
     @EventHandler
     fun onDrag(event: InventoryDragEvent) {
-        if (event.inventory.holder is OyasaiMenuHolder) event.isCancelled = true
+        if (event.inventory.holder is OyasaiMusicMenuHolder) event.isCancelled = true
     }
 
     @EventHandler
     fun onClose(event: InventoryCloseEvent) {
-        val holder = event.inventory.holder as? OyasaiMenuHolder ?: return
+        val holder = event.inventory.holder as? OyasaiMusicMenuHolder ?: return
         holder.menu.onClose(event)
         // NOTE: ここでは current/history を破棄しない（クラスコメント参照）。
     }
@@ -119,9 +122,15 @@ class MenuManager(private val plugin: OyasaiMusic) : Listener {
     @EventHandler
     fun onPlayerQuit(event: PlayerQuitEvent) {
         val uuid = event.player.uniqueId
+        BedrockActionModeService.reset(uuid)
         current.remove(uuid)
         history.remove(uuid)
         lastKnown.remove(uuid)
         lastClickMillis.remove(uuid)
     }
+}
+
+/** 楽曲の設定値を保持している画面が、DB再読込を待たず即時更新するための契約。 */
+interface SongUpdateAware {
+    fun onSongUpdated(updatedSong: Song)
 }

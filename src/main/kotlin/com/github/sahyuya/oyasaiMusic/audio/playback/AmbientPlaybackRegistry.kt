@@ -13,14 +13,12 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 環境BGM用レコード（UI/UX設計書9章）が設置されたジュークボックスの再生状態を管理する。
  *
- * 【実装方針（要確認）】
  * このアイテムはバニラの音楽レコードではなく独自形式の楽曲のため、ジュークボックスへの
- * 挿入時にバニラの挿入処理自体はキャンセルし（見た目上ジュークボックスは空のまま）、
- * このレジストリが座標をキーに独自の再生セッションを管理する。
+ * 挿入時にバニラの再生を抑止し、このレジストリが座標をキーに独自の再生セッションを管理する。
  *   - トリガー=ジュークボックス: 設置と同時に再生開始
  *   - トリガー=RS信号: 設置場所への通電/断電で再生開始/停止
  *   - トリガー=接近: 範囲内にプレイヤーが入った時点で自動的に再生開始、居なくなったら停止
- * 範囲内のプレイヤーは [tick] （1秒ごとに呼び出す想定）で追従させ、動いて範囲外に出た
+ * 範囲内のプレイヤーは [tick] で追従させ、動いて範囲外に出た
  * プレイヤーへは音を止め、新たに入ってきたプレイヤーには鳴らし始める。
  */
 class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
@@ -38,6 +36,8 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
         var enabled: Boolean = trigger == AmbientTrigger.JUKEBOX,
         /** 非ループ曲が最後まで鳴り終えたか。トリガー再投入まで再生し直さない。 */
         var completed: Boolean = false,
+        /** RS入力の立ち上がりだけを検知するための直前状態。 */
+        var redstonePowered: Boolean = false,
     )
 
     private val entries = ConcurrentHashMap<String, AmbientEntry>()
@@ -65,15 +65,34 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
         val k = key(location)
         val entry = entries[k] ?: return
         if (entry.trigger != AmbientTrigger.REDSTONE) return
-        entry.enabled = powered
-        entry.completed = false
-        if (powered) startPlayback(k) else stopPlayback(k)
+        // ボタン等の短い入力を「再生/停止」トグルとして扱う。ONのまま保持しても止めず、
+        // 次の立ち上がり入力が来た時だけ、再生中なら停止・停止中なら最初から再生する。
+        val risingEdge = powered && !entry.redstonePowered
+        entry.redstonePowered = powered
+        if (!risingEdge) return
+
+        if (entry.session != null || entry.loading || (entry.enabled && !entry.completed)) {
+            entry.enabled = false
+            entry.completed = false
+            stopPlayback(k)
+        } else {
+            entry.enabled = true
+            entry.completed = false
+            startPlayback(k)
+        }
     }
 
     /** 接近トリガーの開始判定・範囲内リスナーの追従のため、定期的(1秒毎想定)に呼び出す。 */
     fun tick() {
         entries.forEach { (k, entry) ->
             val nearby = nearbyPlayers(entry)
+
+            // BlockRedstoneEventは周囲のダストだけに発火し、ジュークボックス自身には届かない
+            // 場合がある。そのため実際の通電状態を毎秒確認して、RSトリガーを確実に反映する。
+            if (entry.trigger == AmbientTrigger.REDSTONE) {
+                val powered = entry.location.block.isBlockPowered
+                onRedstoneChange(entry.location, powered)
+            }
 
             if (entry.trigger == AmbientTrigger.PROXIMITY) {
                 val shouldPlay = nearby.isNotEmpty()
@@ -139,7 +158,6 @@ class AmbientPlaybackRegistry(private val plugin: OyasaiMusic) {
                     song = entry.song,
                     notes = loaded.notes,
                     recipients = nearbyPlayers(entry),
-                    isAmbientPlayback = true,
                     onCompletion = {
                         entry.session = null
                         entry.completed = !entry.loop

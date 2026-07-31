@@ -18,22 +18,17 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Book-and-Quillの編集UIはサーバー側から直接開くAPIが無く、クライアントが手に持った
  * WRITABLE_BOOKを右クリックすることでのみ開かれる。そのため以下のフローを取る:
- *   1. プレイヤーの手（現在選択中のホットバースロット）を一時退避し、案内文言入りの
- *      WRITABLE_BOOKを持たせる。
+ *   1. 空いているホットバースロットへ案内文言入りのWRITABLE_BOOKを一時配置し、選択する。
  *   2. プレイヤーがそれを右クリックして編集 → 「完了」を押すと [PlayerEditBookEvent] が
  *      発火するので、1ページ目のテキストをURLとして受け取る。
- *   3. 手を退避前の状態へ戻し、コールバックを呼ぶ（呼び出し側でGUIを再度開き直す想定）。
- *
- * 制限: プレイヤーが本を右クリックせずに手放したりログアウトした場合、完了を検知できない
- * （退避前アイテムを失う可能性がある）。今後タイムアウト処理や、手放し検知
- * （PlayerDropItemEvent等）での復元処理を追加検討。
+ *   3. 入力本だけを削除して、元の選択スロットへ戻す。既存の手持ちアイテムは一切置き換えない。
  */
 object BookQuillUrlInput {
 
     private val pending = ConcurrentHashMap<UUID, Pending>()
     private var listenerInstalled = false
 
-    private class Pending(val slot: Int, val previousItem: ItemStack?, val onSubmit: (String) -> Unit)
+    private class Pending(val bookSlot: Int, val previousHeldSlot: Int, val onSubmit: (String) -> Unit)
 
     fun open(
         plugin: Plugin,
@@ -43,17 +38,29 @@ object BookQuillUrlInput {
     ) {
         installListenerOnce(plugin)
 
-        val slot = player.inventory.heldItemSlot
-        // ItemStackは可変なのでcloneして退避する。参照のままだとクライアント同期で上書きされる。
-        val previous = player.inventory.getItem(slot)?.clone()
-        pending[player.uniqueId] = Pending(slot, previous, onSubmit)
+        if (pending.containsKey(player.uniqueId)) {
+            player.sendMessage("§eすでにURL入力用の本を開いています。完了してからもう一度お試しください。")
+            return
+        }
+        val bookSlot = (0..8).firstOrNull { slot ->
+            val item = player.inventory.getItem(slot)
+            item == null || item.type.isAir
+        }
+        if (bookSlot == null) {
+            player.sendMessage("§cURL入力にはホットバーに空きスロットが1つ必要です。")
+            return
+        }
+        val previousHeldSlot = player.inventory.heldItemSlot
+        pending[player.uniqueId] = Pending(bookSlot, previousHeldSlot, onSubmit)
 
         val book = ItemStack(Material.WRITABLE_BOOK)
         book.editMeta { meta ->
             meta as BookMeta
             meta.addPage(guideText)
         }
-        player.inventory.setItem(slot, book)
+        player.inventory.setItem(bookSlot, book)
+        player.inventory.heldItemSlot = bookSlot
+        player.updateInventory()
         player.sendMessage("§a本を右クリックして開き、URLを入力後「完了」を押してください。")
     }
 
@@ -71,9 +78,12 @@ object BookQuillUrlInput {
                 // BookMeta#getPage(int)は1始まりのページ番号を取る旧来API（プレーンな文字列を返す）。
                 val text = event.newBookMeta.getPage(1)?.trim().orEmpty()
                 Bukkit.getScheduler().runTask(plugin, Runnable {
-                    player.inventory.setItem(session.slot, session.previousItem)
-                    // キャンセルした本編集パケットが直後にクライアント側の手持ち表示へ反映されないよう、
-                    // 復元後のインベントリを明示的に同期する。
+                    // 追加した一時入力本だけを除去する。元の手持ちスロットは上書きしていないため、
+                    // 手に持っていたアイテムが消えることはない。
+                    if (player.inventory.getItem(session.bookSlot)?.type == Material.WRITABLE_BOOK) {
+                        player.inventory.setItem(session.bookSlot, null)
+                    }
+                    player.inventory.heldItemSlot = session.previousHeldSlot
                     player.updateInventory()
                     if (text.isNotEmpty()) session.onSubmit(text)
                 })

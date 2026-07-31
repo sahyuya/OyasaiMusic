@@ -2,7 +2,6 @@ package com.github.sahyuya.oyasaiMusic.audio
 
 import com.github.sahyuya.oyasaiMusic.model.NoteEvent
 import org.bukkit.Location
-import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -15,7 +14,6 @@ import java.util.concurrent.CopyOnWriteArrayList
  * @param origin 録音開始時点のプレイヤー位置・向き（Pan計算・BPM算出の基準点）
  */
 class DynamicRecordingSession(
-    val playerUuid: UUID,
     val origin: Location,
     val startTimeMillis: Long,
     val quantizeStepMs: Long,

@@ -41,19 +41,39 @@ object SoundDispatcher {
     }
 
     private fun playDefault(recipient: Player, note: NoteEvent) {
-        val bukkitSound = InstrumentMapper.soundFor(InstrumentMapper.toInstrument(note.instrument))
         val pitch = InstrumentMapper.pitchToPlaybackPitch(note.pitch)
         val volume = volumeParam(note.volume)
+        val customSound = note.customSound
+        if (customSound != null) {
+            val seed = note.customSoundSeed
+            if (seed != null) {
+                recipient.playSound(recipient, customSound, SoundCategory.RECORDS, volume, pitch, seed)
+            } else {
+                recipient.playSound(recipient, customSound, SoundCategory.RECORDS, volume, pitch)
+            }
+            return
+        }
+        val bukkitSound = InstrumentMapper.soundFor(InstrumentMapper.toInstrument(note.instrument))
         val adventureSound = AdventureSound.sound(bukkitSound, AdventureSound.Source.RECORD, volume, pitch)
         recipient.playSound(adventureSound, AdventureSound.Emitter.self())
     }
 
     private fun playPositional(recipient: Player, note: NoteEvent, pan: Int) {
-        val sound = InstrumentMapper.soundFor(InstrumentMapper.toInstrument(note.instrument))
         val pitch = InstrumentMapper.pitchToPlaybackPitch(note.pitch)
         val volume = volumeParam(note.volume)
         val location = virtualLocation(recipient, pan)
-        recipient.playSound(location, sound, SoundCategory.RECORDS, volume, pitch)
+        val customSound = note.customSound
+        if (customSound != null) {
+            val seed = note.customSoundSeed
+            if (seed != null) {
+                recipient.playSound(location, customSound, SoundCategory.RECORDS, volume, pitch, seed)
+            } else {
+                recipient.playSound(location, customSound, SoundCategory.RECORDS, volume, pitch)
+            }
+        } else {
+            val sound = InstrumentMapper.soundFor(InstrumentMapper.toInstrument(note.instrument))
+            recipient.playSound(location, sound, SoundCategory.RECORDS, volume, pitch)
+        }
     }
 
     private fun volumeParam(volume0to100: Int): Float = volume0to100.coerceIn(0, 100) / 100f

@@ -7,6 +7,7 @@ import com.github.sahyuya.oyasaiMusic.model.Song
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.event.ClickEvent
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -14,36 +15,24 @@ import org.bukkit.event.inventory.InventoryClickEvent
 import com.github.sahyuya.oyasaiMusic.economy.PayoutResult
 
 /**
- * ⑤ 楽曲詳細画面（UI/UX設計書 6章、参照画像5枚目）。
- *
- * UI/UX設計書6章の機能定義:
- *   ホバー情報: 題名、作者、各種統計、参考リンク。
- *   クリックアクション: 参考リンクをチャット出力（クリックで飛べる）、作者プロフィールへ遷移、
- *                      いいね、お気に入り追加、フォロー。
- *
- * 【アイコン配置について（要確認）】
- * この画面のみ、実装時点で参照画像の細部（各アイコンの素材・正確な位置）を
- * 高い確信度で再確認できなかったため、設計書に明記された5つのクリックアクションと
- * 「戻る」ボタン(サヒュヤ氏指定: slot37)を優先し、アイコンは機能から逆算した妥当な案を
- * 割り当てている。実際の参照画像とズレがあれば教えてほしい。
- *
- * 背景は灰色板ガラス（外枠のみ、空きスロットに限る）。
+ * 楽曲の試聴、作者情報、ソーシャル操作、レコード購入をまとめた詳細画面。
+ * 操作項目を優先して配置し、未使用の外周スロットだけを装飾する。
  */
 class SongDetailScreen(
     private val plugin: OyasaiMusic,
     private val menuManager: MenuManager,
     viewer: Player,
     initialSong: Song,
-) : BaseGridMenu(viewer, Component.text("楽曲詳細")) {
+) : BaseGridMenu(viewer, Component.text("楽曲詳細")), SongUpdateAware {
 
     private val previewSlot = 11   // クリックで再生
     private val authorHeadSlot = 12 // クリックで作者プロフィール(作品一覧)へ
-    private val followSlot = 13     // クリックでフォロー切替
+    private val followSlot = 21     // クリックでフォロー切替
     private val positionalModeSlot = 14 // 通常/立体音響再生の選択（追加項目.txt対応。楽曲にPan指定が無い場合は選択不可）
-    private val settingsSlot = 16     // 作者/OPのみ: 楽曲設定画面へ（UI/UX設計書表には無いが実用上必要なため追加）
+    private val settingsSlot = 15     // 作者/OPのみ: 楽曲設定画面へ（UI/UX設計書表には無いが実用上必要なため追加）
     private val likeSlot = 20         // クリックでいいね
-    private val favoriteSlot = 21     // クリックでお気に入り/プレイリスト追加
-    private val buyRecordSlot = 22    // レコードを購入（サヒュヤ氏の指示で追加。UI/UX設計書7章のレコード販売に対応）
+    private val favoriteSlot = 22     // クリックでお気に入り/プレイリスト追加
+    private val buyRecordSlot = 23    // レコードを購入（サヒュヤ氏の指示で追加。UI/UX設計書7章のレコード販売に対応）
     private val referenceUrlSlot = 24 // クリックで参考リンクをチャット出力
     private val backSlot = 37         // サヒュヤ氏指定: 戻る(矢)
 
@@ -58,6 +47,13 @@ class SongDetailScreen(
     }
 
     override fun refresh() = render()
+
+    override fun onSongUpdated(updatedSong: Song) {
+        if (song.id == updatedSong.id) {
+            song = updatedSong
+            render()
+        }
+    }
 
     private fun loadSocialState() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
@@ -92,15 +88,15 @@ class SongDetailScreen(
         } else {
             inventory.setItem(settingsSlot, null)
         }
-        inventory.setItem(backSlot, GuiItemBuilder(Material.ARROW).name(Component.text("戻る", NamedTextColor.WHITE)).build())
+        inventory.setItem(backSlot, GuiChrome.contentBackButton())
 
-        ContentGrid.fillBorderIfEmpty(inventory, Material.GRAY_STAINED_GLASS_PANE)
+        ContentGrid.fillBorderIfEmpty(inventory, Material.YELLOW_STAINED_GLASS_PANE)
     }
 
     private fun previewItem(state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
         val nowPlaying = state.isPlaying && state.nowPlayingSong?.id == song.id
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
-            .name(songTitle(song, NamedTextColor.AQUA))
+            .name(songTitle(song))
             .lore(
                 Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
                 Component.text("BPM: ${song.bpm}", NamedTextColor.GRAY),
@@ -125,7 +121,7 @@ class SongDetailScreen(
         val stats = AuthorStatsCache.get(plugin, song.authorUuid) { render() }
         val item = HeadTextureUtil.placeholderHead(song.authorUuid, name)
         item.editMeta { meta ->
-            meta.displayName(Component.text("作者: $name", NamedTextColor.GOLD))
+            meta.displayName(Component.text("作者: $name", NamedTextColor.GOLD).decoration(TextDecoration.ITALIC, false))
             meta.lore(buildList {
                 add(Component.text("クリックで作品一覧へ", NamedTextColor.GRAY))
                 if (stats == null) add(Component.text("統計を読み込み中...", NamedTextColor.DARK_GRAY))
@@ -135,7 +131,7 @@ class SongDetailScreen(
                     add(Component.text("総視聴回数: ${stats.totalViews}", NamedTextColor.GRAY))
                     add(Component.text("総フォロワー数: ${stats.totalFollowers}", NamedTextColor.GRAY))
                 }
-            })
+            }.map { it.decoration(TextDecoration.ITALIC, false) })
         }
         return item
     }
@@ -170,7 +166,7 @@ class SongDetailScreen(
             .build()
     }
 
-    private fun referenceUrlItem() = GuiItemBuilder(Material.MAP)
+    private fun referenceUrlItem() = GuiItemBuilder(Material.SPYGLASS)
         .name(Component.text("参考リンク", NamedTextColor.YELLOW))
         .lore(
             Component.text(song.referenceUrl ?: "未設定", NamedTextColor.GRAY),
@@ -201,7 +197,10 @@ class SongDetailScreen(
             positionalModeSlot -> togglePlaybackMode()
             referenceUrlSlot -> outputReferenceUrl()
             likeSlot -> likeSong()
-            favoriteSlot -> menuManager.open(viewer, PlaylistSelectionScreen(plugin, menuManager, viewer, song))
+            favoriteSlot -> {
+                if (!song.published) GuiFeedback.invalid(viewer, "非公開の楽曲は追加できません")
+                else menuManager.open(viewer, PlaylistSelectionScreen(plugin, menuManager, viewer, song))
+            }
             buyRecordSlot -> buyRecord()
             settingsSlot -> if (song.authorUuid == viewer.uniqueId || viewer.hasPermission("oyasaimusic.admin")) {
                 menuManager.open(viewer, SongSettingsScreen(plugin, menuManager, viewer, song))
@@ -213,7 +212,13 @@ class SongDetailScreen(
     private fun playSong() {
         plugin.playbackController.play(viewer, song, onCompletion = {
             val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-            if (state.loopMode == com.github.sahyuya.oyasaiMusic.gui.LoopMode.SINGLE) playSong()
+            if (state.loopMode == com.github.sahyuya.oyasaiMusic.gui.LoopMode.SINGLE) {
+                plugin.playbackController.scheduleTrackTransition(viewer) {
+                    if (plugin.controllerStateService.stateFor(viewer.uniqueId).loopMode == com.github.sahyuya.oyasaiMusic.gui.LoopMode.SINGLE) {
+                        playSong()
+                    }
+                }
+            }
         })
     }
 
@@ -303,8 +308,12 @@ class SongDetailScreen(
     }
 
     private fun likeSong() {
+        if (!song.published) {
+            GuiFeedback.invalid(viewer, "非公開の楽曲にはいいねできません")
+            return
+        }
         if (hasLiked) {
-            viewer.sendMessage("§7既にいいね済みです。")
+            GuiFeedback.invalid(viewer, "既にいいね済みです。")
             return
         }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
@@ -314,10 +323,13 @@ class SongDetailScreen(
                 if (added) {
                     hasLiked = true
                     if (refreshed != null) song = refreshed
-                    viewer.sendMessage("§aいいねしました: ${song.title}")
+                    GuiFeedback.info(viewer, "いいねしました: ${song.title}", NamedTextColor.GREEN)
+                    Bukkit.getPlayer(song.authorUuid)?.let { author ->
+                        plugin.toastNotificationService.showLikeReceived(author, song.title, viewer.name)
+                    }
                     render()
                 } else {
-                    viewer.sendMessage("§7既にいいね済みです。")
+                    GuiFeedback.invalid(viewer, "既にいいね済みです。")
                 }
             })
         })

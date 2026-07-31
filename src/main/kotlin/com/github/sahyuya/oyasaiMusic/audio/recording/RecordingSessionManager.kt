@@ -17,7 +17,6 @@ class RecordingSessionManager {
     fun start(playerUuid: UUID, origin: Location, quantizeUnit: Int): DynamicRecordingSession {
         require(quantizeUnit in 1..4) { "量子化単位は1〜4である必要があります: $quantizeUnit" }
         val session = DynamicRecordingSession(
-            playerUuid = playerUuid,
             origin = origin.clone(),
             startTimeMillis = System.currentTimeMillis(),
             quantizeStepMs = quantizeUnit * 100L,

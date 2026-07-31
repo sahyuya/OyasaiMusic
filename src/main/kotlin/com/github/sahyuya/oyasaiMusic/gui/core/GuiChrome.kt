@@ -5,6 +5,7 @@ import com.github.sahyuya.oyasaiMusic.audio.PlaybackSession
 import com.github.sahyuya.oyasaiMusic.model.Song
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.inventory.Inventory
@@ -117,32 +118,39 @@ object GuiChrome {
 
     private fun renderNav(inventory: Inventory, activeTab: NavTab?, viewer: Player, plugin: OyasaiMusic, actionModeCategory: String?) {
         inventory.setItem(NavTab.MY_SONGS.slot, mySongsNavItem(viewer, plugin, NavTab.MY_SONGS == activeTab))
-        inventory.setItem(NavTab.SEARCH.slot, navItem(Material.RED_CONCRETE, "検索", NavTab.SEARCH == activeTab))
-        inventory.setItem(NavTab.ALL_SONGS.slot, navItem(Material.YELLOW_CONCRETE, "全楽曲一覧", NavTab.ALL_SONGS == activeTab))
+        inventory.setItem(NavTab.SEARCH.slot, navItem(Material.RED_CONCRETE_POWDER, "検索", NamedTextColor.RED, NavTab.SEARCH == activeTab))
+        inventory.setItem(NavTab.ALL_SONGS.slot, navItem(Material.YELLOW_CONCRETE_POWDER, "全楽曲一覧", NamedTextColor.YELLOW, NavTab.ALL_SONGS == activeTab))
         inventory.setItem(
             NavTab.FAVORITES_PLAYLISTS.slot,
-            navItem(Material.LIME_CONCRETE, "お気に入り♪プレイリスト", NavTab.FAVORITES_PLAYLISTS == activeTab),
+            navItem(Material.LIME_CONCRETE_POWDER, "お気に入り・プレイリスト", NamedTextColor.GREEN, NavTab.FAVORITES_PLAYLISTS == activeTab),
         )
 
         // ⑤アクションモードタブ: サヒュヤ氏の指示「左タブのアクションモードの切り替え状況」表示に対応。
         val actionModeLore = if (actionModeCategory != null) {
             val current = BedrockActionModeService.get(viewer.uniqueId, actionModeCategory)
-            listOf(
-                Component.text("現在: ${current.displayName}", NamedTextColor.AQUA),
-                Component.text("クリックで切替", NamedTextColor.DARK_GRAY),
-            )
+            BedrockActionModeService.availableModes(actionModeCategory)
+                .chunked(2)
+                .map { row ->
+                    row.map { actionModeLabel(it, current) }
+                        .reduce { combined, label ->
+                            combined.append(Component.text("  ", NamedTextColor.DARK_GRAY)).append(label)
+                        }
+                }
         } else {
             listOf(Component.text("この画面では未使用", NamedTextColor.DARK_GRAY))
         }
         inventory.setItem(
             NavTab.ACTION_MODE.slot,
-            GuiItemBuilder(Material.CYAN_CONCRETE)
-                .name(Component.text("アクションモード切替", if (NavTab.ACTION_MODE == activeTab) NamedTextColor.YELLOW else NamedTextColor.WHITE))
+            GuiItemBuilder(Material.CYAN_CONCRETE_POWDER)
+                .name(Component.text("アクションモード切り替え", NamedTextColor.AQUA))
                 .lore(actionModeLore)
                 .glint(NavTab.ACTION_MODE == activeTab)
                 .build(),
         )
     }
+
+    private fun actionModeLabel(mode: ActionMode, selected: ActionMode): Component =
+        Component.text(mode.displayName, if (mode == selected) NamedTextColor.GREEN else NamedTextColor.GRAY)
 
     /**
      * ①タブ: サヒュヤ氏の指示により、スティーブ固定ヘッドではなく開いたプレイヤー自身のスキンを使い、
@@ -152,11 +160,12 @@ object GuiChrome {
     private fun mySongsNavItem(viewer: Player, plugin: OyasaiMusic, active: Boolean): ItemStack {
         val stats = AuthorStatsCache.get(plugin, viewer.uniqueId)
         val lore = mutableListOf<Component>()
+        if (active) lore += Component.text("選択中", NamedTextColor.GRAY)
         if (stats != null) {
-            lore += Component.text("総いいね数: ${stats.totalLikes}", NamedTextColor.GRAY)
-            lore += Component.text("総お気に入り数: ${stats.totalFavorites}", NamedTextColor.GRAY)
-            lore += Component.text("総再生回数: ${stats.totalViews}", NamedTextColor.GRAY)
-            lore += Component.text("総フォロワー数: ${stats.totalFollowers}", NamedTextColor.GRAY)
+            lore += profileStat("総いいね数", stats.totalLikes)
+            lore += profileStat("総お気に入り数", stats.totalFavorites)
+            lore += profileStat("総再生回数", stats.totalViews)
+            lore += profileStat("総フォロワー数", stats.totalFollowers)
         } else {
             lore += Component.text("統計を読み込み中...", NamedTextColor.DARK_GRAY)
         }
@@ -165,18 +174,31 @@ object GuiChrome {
         item.editMeta { meta ->
             meta as SkullMeta
             meta.playerProfile = viewer.playerProfile
-            meta.displayName(Component.text("自作楽曲一覧", if (active) NamedTextColor.YELLOW else NamedTextColor.WHITE))
-            meta.lore(lore)
+            meta.displayName(Component.text("マイプロフィール", NamedTextColor.WHITE).decoration(TextDecoration.ITALIC, false))
+            meta.lore(lore.map { it.decoration(TextDecoration.ITALIC, false) })
             meta.setEnchantmentGlintOverride(if (active) true else null)
         }
         return item
     }
 
-    private fun navItem(material: Material, label: String, active: Boolean): ItemStack =
+    private fun navItem(material: Material, label: String, color: NamedTextColor, active: Boolean): ItemStack =
         GuiItemBuilder(material)
-            .name(Component.text(label, if (active) NamedTextColor.YELLOW else NamedTextColor.WHITE))
+            .name(Component.text(label, color))
+            .lore(if (active) listOf(Component.text("選択中", NamedTextColor.GRAY)) else emptyList())
             .glint(active)
             .build()
+
+    private fun profileStat(label: String, value: Long): Component =
+        Component.text("$label: ", NamedTextColor.GRAY)
+            .append(Component.text(value.toString(), NamedTextColor.AQUA))
+
+    /** 40枠をコンテンツで使い切る画面用。1ページ目の「前のページ」欄を戻る操作に置換する。 */
+    fun backControllerButton(): ItemStack =
+        GuiItemBuilder(Material.COPPER_SPEAR).name(Component.text("戻る", NamedTextColor.WHITE)).build()
+
+    /** ディスプレイ内に配置する戻る操作。下段コントローラー用とは素材を分けて視認性を保つ。 */
+    fun contentBackButton(): ItemStack =
+        GuiItemBuilder(Material.ARROW).name(Component.text("戻る", NamedTextColor.WHITE)).build()
 
     private fun renderController(inventory: Inventory, state: PlayerControllerState, sortLabel: String) {
         inventory.setItem(
@@ -192,7 +214,7 @@ object GuiChrome {
         inventory.setItem(ControllerSlots.PAGE_PREV, GuiItemBuilder(Material.RED_DYE).name(Component.text("前のページ", NamedTextColor.RED)).build())
         inventory.setItem(ControllerSlots.PAGE_NEXT, GuiItemBuilder(Material.LIME_DYE).name(Component.text("次のページ", NamedTextColor.GREEN)).build())
 
-        val nowPlayingName = state.nowPlayingSong?.let { songTitle(it, NamedTextColor.AQUA) }
+        val nowPlayingName = state.nowPlayingSong?.let(::songTitle)
             ?: Component.text("再生中の曲はありません", NamedTextColor.AQUA)
         inventory.setItem(
             ControllerSlots.NOW_PLAYING,

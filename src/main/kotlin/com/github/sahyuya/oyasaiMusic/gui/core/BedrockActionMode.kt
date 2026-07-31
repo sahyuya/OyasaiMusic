@@ -1,5 +1,9 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
+import com.github.sahyuya.oyasaiMusic.util.BedrockUtil
+import org.bukkit.entity.Player
+import org.bukkit.event.inventory.ClickType
+import org.bukkit.event.inventory.InventoryClickEvent
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -14,11 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 enum class ActionMode(val displayName: String) {
     PRIMARY("左クリック"),
-    SECONDARY("Shift+左クリック"),
+    SECONDARY("Shift左クリック"),
     TERTIARY("右クリック"),
-    QUATERNARY("Shift+右クリック");
-
-    fun next(): ActionMode = entries[(ordinal + 1) % entries.size]
+    QUATERNARY("Shift右クリック");
 }
 
 /**
@@ -30,6 +32,7 @@ object ActionModeCategory {
     const val SONG_LIST = "song_list"                 // 全楽曲一覧・自作楽曲一覧・検索結果・作者作品
     const val PLAYLIST_LIST = "playlist_list"          // お気に入り♪プレイリスト一覧
     const val PLAYLIST_DETAIL = "playlist_detail"      // プレイリスト/お気に入りの登録曲一覧
+    const val SONG_SETTINGS = "song_settings"          // 楽曲設定
 }
 
 /**
@@ -41,15 +44,50 @@ object ActionModeCategory {
 object BedrockActionModeService {
     private val modes = ConcurrentHashMap<Pair<UUID, String>, ActionMode>()
 
-    fun get(playerUuid: UUID, category: String): ActionMode = modes.getOrDefault(playerUuid to category, ActionMode.PRIMARY)
+    /**
+     * 楽曲設定は Shift 操作を割り当てないため、統合版のモード切替も左右クリックの2択にする。
+     * 他の画面は従来どおり4種を循環する。
+     */
+    fun availableModes(category: String): List<ActionMode> = when (category) {
+        ActionModeCategory.SONG_SETTINGS -> listOf(ActionMode.PRIMARY, ActionMode.TERTIARY)
+        else -> ActionMode.entries
+    }
+
+    fun get(playerUuid: UUID, category: String): ActionMode {
+        val selected = modes[playerUuid to category]
+        return selected?.takeIf { it in availableModes(category) } ?: ActionMode.PRIMARY
+    }
 
     fun cycle(playerUuid: UUID, category: String): ActionMode {
-        val next = get(playerUuid, category).next()
+        val available = availableModes(category)
+        val currentIndex = available.indexOf(get(playerUuid, category))
+        val next = available[(currentIndex + 1) % available.size]
         modes[playerUuid to category] = next
         return next
     }
 
     fun reset(playerUuid: UUID) {
         modes.keys.removeIf { it.first == playerUuid }
+    }
+}
+
+/**
+ * Java版のクリック種別と、統合版の選択中アクションモードを同じ値へ正規化する。
+ * 各画面は戻り値だけを処理することで、操作体系の変更をこの1か所に集約できる。
+ */
+fun resolveActionMode(
+    viewer: Player,
+    event: InventoryClickEvent,
+    category: String,
+    bedrockPrefix: String,
+): ActionMode {
+    if (BedrockUtil.isBedrock(viewer, bedrockPrefix)) {
+        return BedrockActionModeService.get(viewer.uniqueId, category)
+    }
+    return when (event.click) {
+        ClickType.SHIFT_LEFT -> ActionMode.SECONDARY
+        ClickType.RIGHT -> ActionMode.TERTIARY
+        ClickType.SHIFT_RIGHT -> ActionMode.QUATERNARY
+        else -> ActionMode.PRIMARY
     }
 }

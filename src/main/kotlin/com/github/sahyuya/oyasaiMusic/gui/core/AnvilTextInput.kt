@@ -24,28 +24,12 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 「テキスト入力にはAnvilGUIライブラリ不使用、Paper純正のMenuType.ANVIL APIを使用」という
- * 技術方針に基づくテキスト入力ヘルパー（題名検索・作者名検索・楽曲タイトル変更・
- * プレイリスト名変更等で使用）。
+ * Paper標準の金床画面を使うテキスト入力セッション。
+ * 題名検索・楽曲設定・プレイリスト名入力で共通利用する。
  *
- * サヒュヤ氏から提供された動作実績のある実装例(SocialLikesAnvilInput.kt)を全面的に参考にし、
- * 当初の自作実装から以下を修正している（根本原因の特定含む）:
- *
- *   - 【根本原因】入力中のリネームテキストは [org.bukkit.inventory.AnvilInventory] ではなく
- *     [AnvilView]（org.bukkit.inventory.view.AnvilView）が持つプロパティだった。
- *     当初 `(event.inventory as? AnvilInventory)` のようにインベントリ側からキャストしており、
- *     これが常に失敗して入力テキストを取得できず、確定処理(onSubmit)が呼ばれていなかった。
- *   - セッション対象インベントリへのクリックは常に全てキャンセルし、結果アイテムを
- *     プレイヤーが実際に受け取ることが無いようにする（以前の実装はキャンセルに失敗する/
- *     キャンセルをやめる変更をしており、紙アイテムを取得できてしまっていた）。
- *   - `PrepareAnvilEvent` のたびに結果スロットのアイテムを、入力中テキストを表示名に
- *     埋め込んだプレースホルダーとして明示的に描画し直す（`event.result` を直接設定）。
- *   - 結果スロットをクリックした時点のテキストが空なら何もせず(表示だけ更新して)待機し、
- *     テキストがある場合のみセッションを破棄してGUIを閉じ、次tickでonSubmitを呼ぶ。
- *   - 修復コスト・経験値レベル制限を無効化し（`setRepairCost(0)` 等）、プレイヤーが
- *     レベル不足で結果を受け取れない事態を防ぐ。
- *   - PDCタグでセッション由来のアイテムを識別し、GUIを閉じた1tick後にプレイヤーの
- *     実インベントリ/カーソルへ漏れ出していないか確認して掃除する安全策も追加している。
+ * 結果スロット以外の操作を無効化し、入力用アイテムにはPDCを付与する。これにより、
+ * 確定時や画面を閉じた際に入力用アイテムがプレイヤーの所持品へ残らない。
+ * 入力値は[AnvilView.renameText]から取得し、経験値や修理コストは要求しない。
  */
 object AnvilTextInputSession : Listener {
 
@@ -88,7 +72,7 @@ object AnvilTextInputSession : Listener {
             .build(player)
         configure(view)
 
-        // サヒュヤ氏の指示: 初回表示時は未入力(素のPAPER)ではなく「ここに入力」等の案内を表示する。
+        // 初回表示でも入力欄の用途が分かるよう、案内テキストを入れておく。
         val placeholder = ItemStack(itemMaterial)
         val initialDisplayText = initialText.ifEmpty { "ここに入力" }
         placeholder.editMeta { it.displayName(Component.text(initialDisplayText, NamedTextColor.GRAY)) }

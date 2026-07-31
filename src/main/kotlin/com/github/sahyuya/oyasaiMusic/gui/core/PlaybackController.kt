@@ -3,25 +3,39 @@ package com.github.sahyuya.oyasaiMusic.gui
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
 import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.model.Song
+import net.kyori.adventure.bossbar.BossBar
+import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextColor
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
+import org.bukkit.scheduler.BukkitTask
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 再生・一時停止・ループ・シャッフル等、下段メディアコントローラーに関する状態変更を
- * 一箇所に集約するコントローラー（GUIフェーズで追加）。
+ * 一箇所に集約するコントローラー。
  *
- * 【背景】各画面が個別に `PlaybackEngine.play()` を呼び、[PlayerControllerState] を直接
- * 書き換えていたため、以下のような不具合が発生していた:
- *   - 再生開始/終了で状態は更新されても、その時点で開いているGUIの再描画が呼ばれず、
- *     「再生中のレコードにエンチャント模様が付かない」「終了してもエンチャント模様が取れない」
- *   - 再生中の実際の曲(Song)を保持していなかったため、
- *     「下段の再生中の楽曲詳細を開くボタンが機能しない」
- *   - 一時停止/再開の実装が無く、下段の再生ボタンが常に「未実装」メッセージだった
- * これらを解消するため、再生に関する操作は必ずこのクラスを経由させ、
- * 状態変更のたびに [MenuManager.refreshCurrent] で現在開いているGUIを再描画する。
+ * 再生に関する操作は必ずこのクラスを経由し、状態変更後は
+ * [MenuManager.refreshCurrent]で開いている画面を更新する。再生状態とGUI表示を同じ
+ * データ源に揃えることで、曲名・再生中表示・ボスバーの不整合を防ぐ。
  */
 class PlaybackController(private val plugin: OyasaiMusic, private val menuManager: MenuManager) {
+
+    companion object {
+        private const val TRACK_TRANSITION_TICKS = 15L // 0.75秒
+    }
+
+    private val nowPlayingBars = ConcurrentHashMap<UUID, BossBar>()
+    private val bossBarTasks = ConcurrentHashMap<UUID, BukkitTask>()
+
+    /**
+     * Minecraft のボスバー色はクライアント仕様により7色の列挙値だけであり、任意の RGB 値には
+     * できない。そのため文字色は指定 RGB をそのまま使い、バー本体は最も近い標準色へ対応付ける。
+     */
+    private data class RecordBossBarStyle(val textColor: TextColor, val barColor: BossBar.Color)
 
     /**
      * 楽曲を再生する。既に何か再生中であればまず停止してから開始する（多重再生防止）。
@@ -60,6 +74,7 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
                 val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
                 // 既に再生中のセッションがあれば止める（多重再生防止）。
                 state.activeSession?.let { plugin.playbackEngine.stop(it) }
+                hideNowPlayingBar(viewer)
 
                 val mode = plugin.playbackModeService.resolve(viewer.uniqueId, song)
                 val session = plugin.playbackEngine.play(
@@ -74,20 +89,23 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
                             menuManager.refreshCurrent(player.uniqueId)
                         }
                     },
-                    onCompletion = {
+                    onCompletion = { finishedSession ->
                         val s2 = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                        s2.isPlaying = false
-                        s2.activeSession = null
-                        menuManager.refreshCurrent(viewer.uniqueId)
-                        onCompletion?.invoke()
+                        if (s2.activeSession?.sessionId == finishedSession.sessionId) {
+                            s2.isPlaying = false
+                            s2.activeSession = null
+                            hideNowPlayingBar(viewer)
+                            menuManager.refreshCurrent(viewer.uniqueId)
+                            onCompletion?.invoke()
+                        }
                     },
                 )
                 state.isPlaying = true
                 state.nowPlayingSong = song
                 state.activeSession = session
+                showNowPlayingBar(viewer, song, session, audio.totalDurationMs)
                 if (rememberInHistory) rememberSong(state, song)
                 menuManager.refreshCurrent(viewer.uniqueId)
-                viewer.sendMessage("§a再生開始: §f${song.title}")
             })
         })
     }
@@ -113,11 +131,11 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
         if (state.isPlaying) {
             plugin.playbackEngine.pause(session)
             state.isPlaying = false
-            viewer.sendMessage("§e一時停止しました。")
+            GuiFeedback.info(viewer, "一時停止しました。", NamedTextColor.YELLOW)
         } else {
             plugin.playbackEngine.resume(session)
             state.isPlaying = true
-            viewer.sendMessage("§a再生を再開しました。")
+            GuiFeedback.info(viewer, "再生を再開しました。", NamedTextColor.GREEN)
         }
         menuManager.refreshCurrent(viewer.uniqueId)
     }
@@ -148,18 +166,40 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
         menuManager.refreshCurrent(viewer.uniqueId)
     }
 
+    /** 曲間の統一クールタイム（0.75秒）後に、ループ/シャッフル状態を再評価して遷移する。 */
+    fun scheduleTrackTransition(viewer: Player, action: () -> Unit) {
+        Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            if (viewer.isOnline) action()
+        }, TRACK_TRANSITION_TICKS)
+    }
+
+    /** 設定変更直後に、再生中表示とボスバーを最新の題名・作者・レコード種別へ差し替える。 */
+    fun applySongMetadataUpdate(updatedSong: Song) {
+        Bukkit.getOnlinePlayers().forEach { player ->
+            val state = plugin.controllerStateService.stateFor(player.uniqueId)
+            if (state.nowPlayingSong?.id != updatedSong.id) return@forEach
+            state.nowPlayingSong = updatedSong
+            nowPlayingBars[player.uniqueId]?.let { bar ->
+                val style = bossBarStyle(updatedSong.recordMaterial)
+                val authorName = Bukkit.getOfflinePlayer(updatedSong.authorUuid).name ?: "不明"
+                bar.name(Component.text("♪ ${updatedSong.title} - $authorName", style.textColor))
+                bar.color(style.barColor)
+            }
+        }
+    }
+
     /** 試聴履歴の直前の楽曲へ戻る。プレイリストを開いていない画面でも利用できる。 */
-    fun playPrevious(viewer: Player) = moveInHistory(viewer, -1, "前の曲はありません。")
+    fun playPrevious(viewer: Player) = moveInHistory(viewer, -1, "前の曲はありません")
 
     /** 試聴履歴の次の楽曲へ進む。 */
-    fun playNext(viewer: Player) = moveInHistory(viewer, 1, "次の曲はありません。")
+    fun playNext(viewer: Player) = moveInHistory(viewer, 1, "次の曲はありません")
 
     private fun moveInHistory(viewer: Player, direction: Int, noSongMessage: String) {
         val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
         val targetIndex = state.listeningHistoryIndex + direction
         val target = state.listeningHistory.getOrNull(targetIndex)
         if (target == null) {
-            viewer.sendMessage("§7$noSongMessage")
+            GuiFeedback.invalid(viewer, noSongMessage)
             return
         }
         state.listeningHistoryIndex = targetIndex
@@ -195,4 +235,59 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
         }
         return true
     }
+
+    private fun showNowPlayingBar(viewer: Player, song: Song, session: com.github.sahyuya.oyasaiMusic.audio.PlaybackSession, durationMs: Int) {
+        val style = bossBarStyle(song.recordMaterial)
+        val authorName = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
+        val bar = BossBar.bossBar(
+            Component.text("♪ ${song.title} - $authorName", style.textColor),
+            0f,
+            style.barColor,
+            BossBar.Overlay.PROGRESS,
+        )
+        nowPlayingBars[viewer.uniqueId] = bar
+        viewer.showBossBar(bar)
+        val safeDuration = durationMs.coerceAtLeast(1).toLong()
+        bossBarTasks.remove(viewer.uniqueId)?.cancel()
+        bossBarTasks[viewer.uniqueId] = Bukkit.getScheduler().runTaskTimer(plugin, Runnable {
+            if (!viewer.isOnline || session.isCancelled || plugin.controllerStateService.stateFor(viewer.uniqueId).activeSession?.sessionId != session.sessionId) {
+                hideNowPlayingBar(viewer)
+                return@Runnable
+            }
+            bar.progress((session.elapsedPlaybackMs().toDouble() / safeDuration).coerceIn(0.0, 1.0).toFloat())
+        }, 0L, 2L)
+    }
+
+    private fun hideNowPlayingBar(viewer: Player) {
+        bossBarTasks.remove(viewer.uniqueId)?.cancel()
+        nowPlayingBars.remove(viewer.uniqueId)?.let { viewer.hideBossBar(it) }
+    }
+
+    private fun bossBarStyle(recordMaterial: String): RecordBossBarStyle = when (recordMaterial.uppercase()) {
+        "MUSIC_DISC_13" -> recordBossBarStyle("FCFCFC", BossBar.Color.YELLOW)
+        "MUSIC_DISC_CAT" -> recordBossBarStyle("4BFC00", BossBar.Color.GREEN)
+        "MUSIC_DISC_BLOCKS" -> recordBossBarStyle("DF533A", BossBar.Color.RED)
+        "MUSIC_DISC_CHIRP" -> recordBossBarStyle("D80003", BossBar.Color.RED)
+        "MUSIC_DISC_FAR" -> recordBossBarStyle("71CA32", BossBar.Color.GREEN)
+        "MUSIC_DISC_MALL" -> recordBossBarStyle("8268CA", BossBar.Color.PURPLE)
+        "MUSIC_DISC_MELLOHI" -> recordBossBarStyle("FCFCFC", BossBar.Color.PURPLE)
+        "MUSIC_DISC_STAL" -> recordBossBarStyle("484848", BossBar.Color.PURPLE)
+        "MUSIC_DISC_STRAD" -> recordBossBarStyle("FCFCFC", BossBar.Color.WHITE)
+        "MUSIC_DISC_WARD" -> recordBossBarStyle("8CC400", BossBar.Color.GREEN)
+        "MUSIC_DISC_11" -> recordBossBarStyle("252525", BossBar.Color.PURPLE)
+        "MUSIC_DISC_WAIT" -> recordBossBarStyle("6D89B1", BossBar.Color.BLUE)
+        "MUSIC_DISC_PIGSTEP" -> recordBossBarStyle("F4D049", BossBar.Color.RED)
+        "MUSIC_DISC_OTHERSIDE" -> recordBossBarStyle("3989C2", BossBar.Color.GREEN)
+        "MUSIC_DISC_5" -> recordBossBarStyle("0F8484", BossBar.Color.BLUE)
+        "MUSIC_DISC_RELIC" -> recordBossBarStyle("42A3E2", BossBar.Color.RED)
+        "MUSIC_DISC_CREATOR" -> recordBossBarStyle("F6CC78", BossBar.Color.GREEN)
+        "MUSIC_DISC_CREATOR_MUSIC_BOX" -> recordBossBarStyle("F6CC78", BossBar.Color.YELLOW)
+        "MUSIC_DISC_PRECIPICE" -> recordBossBarStyle("DE8368", BossBar.Color.GREEN)
+        "MUSIC_DISC_TEARS" -> recordBossBarStyle("9DC1C1", BossBar.Color.WHITE)
+        "MUSIC_DISC_LAVA_CHICKEN" -> recordBossBarStyle("FCFCF6", BossBar.Color.RED)
+        else -> recordBossBarStyle("FCFCFC", BossBar.Color.YELLOW)
+    }
+
+    private fun recordBossBarStyle(textHex: String, barColor: BossBar.Color): RecordBossBarStyle =
+        RecordBossBarStyle(TextColor.color(textHex.toInt(16)), barColor)
 }

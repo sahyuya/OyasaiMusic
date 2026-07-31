@@ -26,6 +26,7 @@ class MusicMenuCommand(private val plugin: OyasaiMusic) : CommandExecutor, TabCo
             "play" -> withSong(player, args.getOrNull(1)) { song -> plugin.playbackController.play(player, song) }
             "open" -> withSong(player, args.getOrNull(1)) { song ->
                 plugin.menuManager.open(player, SongDetailScreen(plugin, plugin.menuManager, player, song), rememberAsPrevious = false)
+                plugin.playbackController.play(player, song)
             }
             else -> player.sendMessage("§e/mm [play|open] <楽曲ID>")
         }

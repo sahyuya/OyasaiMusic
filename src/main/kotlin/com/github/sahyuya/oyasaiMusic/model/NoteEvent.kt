@@ -10,6 +10,8 @@ package com.github.sahyuya.oyasaiMusic.model
  * @param pitch 音階 0〜24（5バイト目）。バニラのノートブロックの音域(F#3〜F#5)に対応。
  * @param volume 音量 0〜100（6バイト目）
  * @param pan 定位 -100(左)〜0(中央)〜100(右)（7バイト目）
+ * @param customSound 看板4行目で指定されたバニラ音源の実体パス。nullなら通常のノートブロック音色を使う。
+ * @param customSoundSeed 指定パターンをクライアント側で固定する再生seed。
  */
 data class NoteEvent(
     val timeMs: Int,
@@ -17,6 +19,8 @@ data class NoteEvent(
     val pitch: Byte,
     val volume: Int,
     val pan: Int,
+    val customSound: String? = null,
+    val customSoundSeed: Long? = null,
 ) {
     init {
         require(timeMs >= 0) { "timeMsは0以上である必要があります: $timeMs" }
@@ -24,6 +28,10 @@ data class NoteEvent(
         require(pitch in 0..24) { "pitchは0〜24である必要があります: $pitch" }
         require(volume in 0..100) { "volumeは0〜100である必要があります: $volume" }
         require(pan in -100..100) { "panは-100〜100である必要があります: $pan" }
+        require(customSound == null || customSound.matches(Regex("[a-z0-9_./:-]{1,256}"))) {
+            "customSoundの形式が不正です: $customSound"
+        }
+        require(customSound != null || customSoundSeed == null) { "customSoundSeedにはcustomSoundが必要です" }
     }
 
     /** 音量・定位を上書きしたコピーを返す（看板による上書き記録用）。 */

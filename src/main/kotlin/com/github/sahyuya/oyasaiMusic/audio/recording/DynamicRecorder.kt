@@ -73,6 +73,7 @@ object DynamicRecorder {
         val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromWorld(block)
         overrideVolume?.let { finalVolume = it }
         overridePan?.let { finalPan = it }
+        val customSound = SignOverrideProcessor.extractCustomSoundFromWorld(block)
 
         val note = NoteEvent(
             timeMs = quantizedMs,
@@ -80,6 +81,8 @@ object DynamicRecorder {
             pitch = pitch.coerceIn(0, 24),
             volume = finalVolume,
             pan = finalPan,
+            customSound = customSound?.eventKey,
+            customSoundSeed = customSound?.seed,
         )
         session.notes.add(note)
         return note

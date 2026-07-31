@@ -26,7 +26,6 @@ import java.util.concurrent.atomic.AtomicInteger
  * ステレオ定位(Pan)付きの [PlaybackMode.POSITIONAL]（立体音響再生）は、リスナーごとに
  * 個別選択できるオプション再生として提供する（[modeResolver] 参照）。
  *
- * GUIフェーズで追加: [pause]/[resume] による一時停止・再開（サヒュヤ氏の指示）。
  * 再生に必要な文脈（スケール済み音符・Bedrock向け間引き結果・各種コールバック等）を
  * [PlaybackContext] としてセッションIDごとに保持し、[pause] では未発火のタスクを全て
  * キャンセルするだけ、[resume] ではその時点の経過時間から残りの音符・コールバックを
@@ -69,7 +68,6 @@ class PlaybackEngine(
      * @param notes 再生する音符列（[SongAudioFile.read] の結果等）
      * @param recipients 再生対象プレイヤー（個人プレイヤー再生なら1人、環境BGMなら範囲内の複数人）
      * @param playbackBpm 再生速度の基準となるBPM。song.bpmと異なる場合、ノート間隔を比例縮小/拡大する
-     * @param isAmbientPlayback ジュークボックス等の環境音再生かどうか（視聴回数カウント対象外の判定に使用）
      * @param onListenThresholdReached 各リスナーが総演奏時間の80%まで聴き終えた時点で呼ばれる
      * @param onCompletion 再生が最後まで完了した時点で呼ばれる（一時停止中は呼ばれない）
      * @param mode [modeResolver] が指定されない場合、または該当リスナーの解決結果が無い場合に使う既定の再生方式
@@ -81,13 +79,12 @@ class PlaybackEngine(
         notes: List<NoteEvent>,
         recipients: Collection<Player>,
         playbackBpm: Int = song.bpm,
-        isAmbientPlayback: Boolean = false,
         onListenThresholdReached: ((Player, Song) -> Unit)? = null,
         onCompletion: ((PlaybackSession) -> Unit)? = null,
         mode: PlaybackMode = defaultMode,
         modeResolver: ((Player) -> PlaybackMode?)? = null,
     ): PlaybackSession {
-        val session = PlaybackSession(song = song, initialRecipients = recipients, isAmbientPlayback = isAmbientPlayback)
+        val session = PlaybackSession(song = song, initialRecipients = recipients)
         if (notes.isEmpty() || recipients.isEmpty()) {
             return session
         }
