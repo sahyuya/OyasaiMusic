@@ -142,7 +142,7 @@ object GuiChrome {
         inventory.setItem(
             NavTab.ACTION_MODE.slot,
             GuiItemBuilder(Material.CYAN_CONCRETE_POWDER)
-                .name(Component.text("アクションモード切り替え", NamedTextColor.AQUA))
+                .name(navTitle("アクションモード切り替え", NamedTextColor.AQUA))
                 .lore(actionModeLore)
                 .glint(NavTab.ACTION_MODE == activeTab)
                 .build(),
@@ -174,7 +174,7 @@ object GuiChrome {
         item.editMeta { meta ->
             meta as SkullMeta
             meta.playerProfile = viewer.playerProfile
-            meta.displayName(Component.text("マイプロフィール", NamedTextColor.WHITE).decoration(TextDecoration.ITALIC, false))
+            meta.displayName(navTitle("マイプロフィール", NamedTextColor.WHITE))
             meta.lore(lore.map { it.decoration(TextDecoration.ITALIC, false) })
             meta.setEnchantmentGlintOverride(if (active) true else null)
         }
@@ -183,10 +183,16 @@ object GuiChrome {
 
     private fun navItem(material: Material, label: String, color: NamedTextColor, active: Boolean): ItemStack =
         GuiItemBuilder(material)
-            .name(Component.text(label, color))
+            .name(navTitle(label, color))
             .lore(if (active) listOf(Component.text("選択中", NamedTextColor.GRAY)) else emptyList())
             .glint(active)
             .build()
+
+    /** 左タブの5項目だけに使う、色付き・太字・非イタリックの表示名。 */
+    private fun navTitle(label: String, color: NamedTextColor): Component =
+        Component.text(label, color)
+            .decoration(TextDecoration.BOLD, true)
+            .decoration(TextDecoration.ITALIC, false)
 
     private fun profileStat(label: String, value: Long): Component =
         Component.text("$label: ", NamedTextColor.GRAY)
