@@ -354,9 +354,8 @@ class SongSettingsScreen(
     }
 
     /**
-     * UI/UX設計書6章「新曲が公開された際、サーバー全体にチャット通知を行い、クリックで
-     * 即座にその曲の詳細GUIを開き再生できる。」に対応。/musicopenコマンドへのRUN_COMMAND
-     * ClickEventでクリック時にGUIを開けるようにしている。
+     * 新曲公開時は通知権限を持つプレイヤーへチャット通知を行い、クリックで即座に
+     * その曲の詳細GUIを開いて再生できる。通知対象と効果音の対象は同じ権限で統一する。
      */
     private fun togglePublish() {
         val newPublished = !song.published
@@ -379,7 +378,8 @@ class SongSettingsScreen(
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/mm open ${song.id}")),
             )
             .append(Component.text("  /mm open ${song.id}", NamedTextColor.GRAY))
-        val recipients = Bukkit.getOnlinePlayers().toList()
+        val recipients = Bukkit.getOnlinePlayers()
+            .filter { it.hasPermission("oyasaimusic.newsong.notify") }
         recipients.forEach { it.sendMessage(message) }
         plugin.soundEffectService.play(PluginSoundEffect.NEW_SONG, recipients)
     }

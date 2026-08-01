@@ -3,8 +3,8 @@ package com.github.sahyuya.oyasaiMusic.db
 import com.github.sahyuya.oyasaiMusic.model.Song
 import com.github.sahyuya.oyasaiMusic.model.SongStatus
 import com.github.sahyuya.oyasaiMusic.util.UuidUtil
+import java.sql.Connection
 import java.sql.ResultSet
-import java.sql.Statement
 import java.util.UUID
 
 /**
@@ -17,6 +17,7 @@ class SongRepository(private val db: DatabaseManager) {
      * 新規楽曲を下書き(status=DRAFT, published=false)として登録する。
      * 録音システム（グリッド型/回路型/動的録音）は録音完了後に必ずこれを呼び出す。
      *
+     * 削除済みのIDがある場合は最も小さい欠番を再利用し、なければ末尾の次のIDを使う。
      * @return 採番された楽曲ID
      */
     fun insertDraft(
@@ -28,27 +29,48 @@ class SongRepository(private val db: DatabaseManager) {
         fileName: String,
         supportsPositional: Boolean = false,
     ): Long = db.transaction { conn ->
+        val songId = nextAvailableId(conn)
         conn.prepareStatement(
             """
-            INSERT INTO songs (author_uuid, title, created_at, bpm, record_material, price, status, likes, views, file_name, supports_positional, published)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0)
+            INSERT INTO songs (id, author_uuid, title, created_at, bpm, record_material, price, status, likes, views, file_name, supports_positional, published)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0)
             """.trimIndent(),
-            Statement.RETURN_GENERATED_KEYS,
         ).use { ps ->
-            ps.setBytes(1, UuidUtil.toBytes(authorUuid))
-            ps.setString(2, title)
-            ps.setLong(3, System.currentTimeMillis() / 1000)
-            ps.setInt(4, bpm)
-            ps.setString(5, recordMaterial)
-            ps.setInt(6, price)
-            ps.setInt(7, SongStatus.DRAFT.code)
-            ps.setString(8, fileName)
-            ps.setInt(9, if (supportsPositional) 1 else 0)
+            ps.setLong(1, songId)
+            ps.setBytes(2, UuidUtil.toBytes(authorUuid))
+            ps.setString(3, title)
+            ps.setLong(4, System.currentTimeMillis() / 1000)
+            ps.setInt(5, bpm)
+            ps.setString(6, recordMaterial)
+            ps.setInt(7, price)
+            ps.setInt(8, SongStatus.DRAFT.code)
+            ps.setString(9, fileName)
+            ps.setInt(10, if (supportsPositional) 1 else 0)
             ps.executeUpdate()
-            ps.generatedKeys.use { keys ->
-                if (keys.next()) keys.getLong(1) else error("楽曲IDの採番に失敗しました")
+            songId
+        }
+    }
+
+    /**
+     * 楽曲IDは利用者へ表示されるため、削除で生じた欠番を小さい順に再利用する。
+     * この検索とINSERTは同一の[DatabaseManager.transaction]内で直列化されるため、
+     * 複数の録音完了が同時に発生しても同じIDが割り当てられない。
+     */
+    private fun nextAvailableId(conn: Connection): Long {
+        var candidate = 1L
+        conn.prepareStatement("SELECT id FROM songs WHERE id >= 1 ORDER BY id ASC").use { ps ->
+            ps.executeQuery().use { ids ->
+                while (ids.next()) {
+                    val occupied = ids.getLong(1)
+                    if (occupied == candidate) {
+                        candidate++
+                    } else if (occupied > candidate) {
+                        return candidate
+                    }
+                }
             }
         }
+        return candidate
     }
 
     fun findById(id: Long): Song? = db.transaction { conn ->

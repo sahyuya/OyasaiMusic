@@ -50,3 +50,6 @@ permissions:
   oyasaimusic.demosound:
     description: 看板用バニラ音源を試聴する
     default: false
+  oyasaimusic.newsong.notify:
+    description: 新曲公開のチャット通知と効果音を受け取る
+    default: false
