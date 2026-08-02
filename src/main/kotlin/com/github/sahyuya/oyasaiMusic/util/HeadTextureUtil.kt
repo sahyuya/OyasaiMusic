@@ -46,9 +46,6 @@ object HeadTextureUtil {
     /** ローカルまたはこのセッション中のキャッシュを使い、利用できなければスティーブ頭を返す。 */
     fun placeholderHead(uuid: UUID, name: String?): ItemStack = headItem(cachedProfile(uuid) ?: Bukkit.createProfile(uuid, name))
 
-    fun headFor(offlinePlayer: OfflinePlayer): ItemStack =
-        placeholderHead(offlinePlayer.uniqueId, offlinePlayer.name)
-
     /**
      * すぐにキャッシュ済みヘッド（未取得時はスティーブ頭）を返し、Java版の未キャッシュ分だけを
      * PlayerDBから非同期で補完する。同一UUIDの同時要求は1回のHTTP通信に集約する。
