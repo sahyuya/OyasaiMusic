@@ -165,6 +165,17 @@ class MainMenuScreen(
                 meta.displayName(name)
                 meta.lore(lore)
             }
+            if (topAuthorUuid != null) {
+                val topAuthorName = entries.first().authorName
+                HeadTextureUtil.resolveAsync(plugin, topAuthorUuid, topAuthorName) { resolved ->
+                    if (columnMetric[column] != metric || !viewer.isOnline) return@resolveAsync
+                    resolved.editMeta { meta ->
+                        meta.displayName(name)
+                        meta.lore(lore)
+                    }
+                    inventory.setItem(column.slot, resolved)
+                }
+            }
             return head
         }
 
