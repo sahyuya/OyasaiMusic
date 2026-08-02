@@ -85,8 +85,8 @@ class MainMenuScreen(
             GuiItemBuilder(Material.BUNDLE)
                 .name(Component.text("未受け取り報酬を受け取る", NamedTextColor.GREEN))
                 .lore(
-                    Component.text("受取: ${rewards.pendingMoney}円 / ${rewards.pendingPoints}pt", NamedTextColor.GOLD),
-                    Component.text("総収入: ${rewards.totalMoney}円 / ${rewards.totalPoints}pt", NamedTextColor.AQUA),
+                    pendingRewardLine(),
+                    totalRewardLine(),
                     Component.text("クリックで一括受取", NamedTextColor.GRAY),
                 )
                 .build(),
@@ -140,12 +140,19 @@ class MainMenuScreen(
             lore += Component.text("データがありません", NamedTextColor.DARK_GRAY)
         } else {
             entries.forEach { entry ->
-                val line = if (metric == RankingMetric.FOLLOWERS) {
-                    "${entry.rank} ${entry.authorName} - ${entry.score}フォロワー"
-                } else {
-                    "${entry.rank} ${entry.authorName} - 「${entry.title}」 ${entry.score}回"
+                val rankColor = when (entry.rank) {
+                    1 -> NamedTextColor.YELLOW
+                    2 -> NamedTextColor.GRAY
+                    3 -> NamedTextColor.GOLD
+                    else -> NamedTextColor.WHITE
                 }
-                lore += Component.text(line, NamedTextColor.WHITE)
+                val rankAndAuthor = Component.text("${entry.rank} ${entry.authorName}", rankColor)
+                val line = if (metric == RankingMetric.FOLLOWERS) {
+                    rankAndAuthor.append(Component.text(" - ${entry.score}フォロワー", NamedTextColor.WHITE))
+                } else {
+                    rankAndAuthor.append(Component.text(" - 「${entry.title}」 ${entry.score}回", NamedTextColor.WHITE))
+                }
+                lore += line
             }
         }
         lore += Component.text("クリックで指標を切替", NamedTextColor.DARK_GRAY)
@@ -257,4 +264,18 @@ class MainMenuScreen(
         is PayoutResult.Unavailable -> "${result.reason}（残高は保持）"
         is PayoutResult.Failed -> "${result.reason}（残高は保持）"
     }
+
+    private fun pendingRewardLine(): Component {
+        val hasPending = rewards.pendingMoney > 0 || rewards.pendingPoints > 0
+        return Component.text("受取: ", if (hasPending) NamedTextColor.GREEN else NamedTextColor.GRAY)
+            .append(Component.text("${rewards.pendingMoney}円", if (rewards.pendingMoney > 0) NamedTextColor.YELLOW else NamedTextColor.GRAY))
+            .append(Component.text(" / ", NamedTextColor.GRAY))
+            .append(Component.text("${rewards.pendingPoints}pt", if (rewards.pendingPoints > 0) NamedTextColor.AQUA else NamedTextColor.GRAY))
+    }
+
+    private fun totalRewardLine(): Component =
+        Component.text("総収入: ", NamedTextColor.GRAY)
+            .append(Component.text("${rewards.totalMoney}円", NamedTextColor.GOLD))
+            .append(Component.text(" / ", NamedTextColor.GRAY))
+            .append(Component.text("${rewards.totalPoints}pt", NamedTextColor.AQUA))
 }

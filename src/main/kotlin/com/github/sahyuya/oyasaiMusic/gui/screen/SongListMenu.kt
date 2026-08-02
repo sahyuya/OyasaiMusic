@@ -48,6 +48,7 @@ class SongListMenu(
     private var sortIndex = availableSorts.indexOf(initialSort).coerceAtLeast(0)
     private var page = 0
     private var pageSongs: List<Song> = emptyList()
+    private var hasNextPage = false
 
     init {
         reload()
@@ -59,9 +60,10 @@ class SongListMenu(
 
     private fun reload() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-            val songs = loader(currentSort(), PAGE_SIZE, page * PAGE_SIZE)
+            val songs = loader(currentSort(), PAGE_SIZE + 1, page * PAGE_SIZE)
             Bukkit.getScheduler().runTask(plugin, Runnable {
-                pageSongs = songs
+                hasNextPage = songs.size > PAGE_SIZE
+                pageSongs = songs.take(PAGE_SIZE)
                 render()
             })
         })
@@ -88,7 +90,7 @@ class SongListMenu(
         // レコードの欠片(DISC_FRAGMENT_5)で視覚的に区別する（サヒュヤ氏の指示で追加）。
         if (!song.published) {
             val lore: MutableList<Component> = mutableListOf(
-                Component.text("作者: $authorName", NamedTextColor.GRAY),
+                SongLoreComponents.author(authorName),
                 Component.text("非公開（自分だけに表示）", NamedTextColor.DARK_GRAY),
             )
             lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-")
@@ -102,8 +104,8 @@ class SongListMenu(
         }
 
         val lore: MutableList<Component> = mutableListOf(
-            Component.text("作者: $authorName", NamedTextColor.GRAY),
-            Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
+            SongLoreComponents.author(authorName),
+            SongLoreComponents.statistics(song.likes, song.views),
         )
         lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "再生", "詳細", "いいね", "お気に入り追加")
         if (nowPlaying) lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
@@ -136,7 +138,7 @@ class SongListMenu(
                 reload()
             }
             ControllerSlots.PAGE_PREV -> if (page > 0) { page--; reload() } else if (ownTab == null) menuManager.openPrevious(viewer)
-            ControllerSlots.PAGE_NEXT -> if (pageSongs.size == PAGE_SIZE) { page++; reload() }
+            ControllerSlots.PAGE_NEXT -> if (hasNextPage) { page++; reload() }
             else -> if (slot in LIST_SLOTS) handleSongClick(event, slot)
         }
     }

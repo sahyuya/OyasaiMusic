@@ -98,7 +98,7 @@ class SongDetailScreen(
         return GuiItemBuilder(Material.matchMaterial(song.recordMaterial) ?: Material.MUSIC_DISC_13)
             .name(songTitle(song))
             .lore(
-                Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
+                SongLoreComponents.statistics(song.likes, song.views),
                 Component.text("BPM: ${song.bpm}", NamedTextColor.GRAY),
                 Component.text("クリックで再生", NamedTextColor.DARK_GRAY),
                 *(if (nowPlaying) arrayOf(Component.text("♪ 再生中", NamedTextColor.GREEN)) else emptyArray()),
@@ -131,7 +131,7 @@ class SongDetailScreen(
         val name = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
         val stats = AuthorStatsCache.get(plugin, song.authorUuid) { render() }
         item.editMeta { meta ->
-            meta.displayName(Component.text("作者: $name", NamedTextColor.GOLD).decoration(TextDecoration.ITALIC, false))
+            meta.displayName(SongLoreComponents.author(name).decoration(TextDecoration.ITALIC, false))
             meta.lore(buildList {
                 add(Component.text("クリックで作品一覧へ", NamedTextColor.GRAY))
                 if (stats == null) add(Component.text("統計を読み込み中...", NamedTextColor.DARK_GRAY))

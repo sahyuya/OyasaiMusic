@@ -21,7 +21,7 @@ class NotePlayListener(
         if (!sessionManager.hasAnySession()) return
         val now = System.nanoTime()
 
-        for (session in sessionManager.activeSessions()) {
+        for (session in sessionManager.activeDynamicSessions()) {
             val recorder = Bukkit.getPlayer(session.playerUuid) ?: continue
             DynamicRecorder.process(
                 session = session,
@@ -29,6 +29,15 @@ class NotePlayListener(
                 instrument = event.instrument,
                 pitch = event.note.id,
                 recorderLocation = recorder.location,
+                eventTimeNanos = now,
+            )
+        }
+        for (session in sessionManager.activeLiveCircuitSessions()) {
+            DynamicRecorder.processLiveCircuit(
+                session = session,
+                block = event.block,
+                instrument = event.instrument,
+                pitch = event.note.id,
                 eventTimeNanos = now,
             )
         }

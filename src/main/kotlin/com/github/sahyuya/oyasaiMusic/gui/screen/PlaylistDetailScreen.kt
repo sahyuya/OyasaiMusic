@@ -91,7 +91,7 @@ class PlaylistDetailScreen private constructor(
         val nowPlaying = state.isPlaying && state.nowPlayingSong?.id == song.id
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
 
-        val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
+        val lore = mutableListOf<Component>(SongLoreComponents.statistics(song.likes, song.views))
         lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.PLAYLIST_DETAIL, "再生", "詳細を開く", "掴んで移動", "除外")
         when {
             dragging -> lore += Component.text("移動中… 移動先をクリック（再クリックでキャンセル）", NamedTextColor.AQUA)

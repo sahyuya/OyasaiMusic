@@ -54,7 +54,7 @@ object SignOverrideProcessor {
 
     /**
      * 実ワールド上のノートブロックを対象に、真上の看板を読み取る。
-     * 動的録音(/record start)はこちらを使用する。
+     * 生演奏録音(/record live)はこちらを使用する。
      */
     fun extractFromWorld(noteBlock: Block): Pair<Int?, Int?> {
         val above = noteBlock.getRelative(0, 1, 0)

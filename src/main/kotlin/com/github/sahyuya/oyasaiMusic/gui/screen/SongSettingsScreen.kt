@@ -5,6 +5,7 @@ import com.github.sahyuya.oyasaiMusic.audio.CircuitRecorder
 import com.github.sahyuya.oyasaiMusic.audio.GridRecorder
 import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
 import com.github.sahyuya.oyasaiMusic.audio.PluginSoundEffect
+import com.github.sahyuya.oyasaiMusic.audio.RecordingReplacementTarget
 import com.github.sahyuya.oyasaiMusic.model.Song
 import com.github.sahyuya.oyasaiMusic.model.SongStatus
 import net.kyori.adventure.text.Component
@@ -32,7 +33,7 @@ import java.io.File
  *   slot21: BPM（ロケット花火、Anvil数値入力）
  *   slot22: レコードの種類（クリックで循環）
  *   slot23: レコード価格（エメラルド、Anvil数値入力）
- *   slot24: FAWEクリップボードから音源を再読み込み（左クリック=回路型、右クリック=グリッド型）
+ *   slot24: 録音方式を選んで音源を再読み込み／再録音
  *   slot37: 戻る（矢、サヒュヤ氏指定の座標(1,4)＝コンテンツ領域左下）
  *   slot44: 楽曲削除（TNT、2回クリックで確定）
  *
@@ -126,7 +127,10 @@ class SongSettingsScreen(
             .name(Component.text("FAWEクリップボードを再読み込み", NamedTextColor.YELLOW))
             .lore(
                 Component.text("現在の音源ファイルを上書きします", NamedTextColor.RED),
-                *ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_SETTINGS, "回路型録音", "-", "グリッド型録音", "-").toTypedArray(),
+                *ActionLoreBuilder.build(
+                    viewer, prefix, ActionModeCategory.SONG_SETTINGS,
+                    "/rec we grid", "/rec live", "/rec we start", "/rec we default",
+                ).toTypedArray(),
             ).build())
         inventory.setItem(backSlot, backButton())
         inventory.setItem(deleteSlot, deleteItem())
@@ -137,7 +141,7 @@ class SongSettingsScreen(
         .name(songTitle(song))
         .lore(
             Component.text("ステータス: ${statusLabel(song.status)}", NamedTextColor.GRAY),
-            Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
+            SongLoreComponents.statistics(song.likes, song.views),
         )
         .build()
 
@@ -224,9 +228,10 @@ class SongSettingsScreen(
             }
             priceSlot -> editPrice()
             reloadClipboardSlot -> when (resolveAction(event)) {
-                ActionMode.PRIMARY -> reloadFromClipboard(grid = false)
-                ActionMode.TERTIARY -> reloadFromClipboard(grid = true)
-                else -> GuiFeedback.invalid(viewer, "この操作は割り当てられていません")
+                ActionMode.PRIMARY -> reloadFromClipboard(grid = true)
+                ActionMode.SECONDARY -> startLiveReplacement()
+                ActionMode.TERTIARY -> startCircuitReplacement()
+                ActionMode.QUATERNARY -> reloadFromClipboard(grid = false)
             }
             urlSlot -> editUrl()
             publishSlot -> togglePublish()
@@ -340,6 +345,47 @@ class SongSettingsScreen(
             }
         })
     }
+
+    /** `/rec live` 相当: 実際に鳴らしたノートを、停止時にこの楽曲へ上書きする。 */
+    private fun startLiveReplacement() {
+        if (plugin.recordingSessionManager.isRecording(viewer.uniqueId)) {
+            GuiFeedback.invalid(viewer, "既に録音中です。先に /rec stop で終了してください")
+            return
+        }
+        plugin.recordingSessionManager.startDynamic(viewer.uniqueId, replacementTarget())
+        viewer.sendMessage("§a生演奏録音を開始しました。§7終了時にこの楽曲の音源を更新します。終了は /rec stop")
+    }
+
+    /** `/rec we start` 相当: コピー元の現地回路を実演奏で録音して、この楽曲へ上書きする。 */
+    private fun startCircuitReplacement() {
+        if (plugin.recordingSessionManager.isRecording(viewer.uniqueId)) {
+            GuiFeedback.invalid(viewer, "既に録音中です。先に /rec stop で終了してください")
+            return
+        }
+        val clipboard = currentClipboard() ?: return
+        val region = clipboard.region
+        val copiedWorld = runCatching { BukkitAdapter.adapt(region.world) }.getOrNull()
+        if (copiedWorld != null && copiedWorld.uid != viewer.world.uid) {
+            GuiFeedback.invalid(viewer, "コピー元のワールド（${copiedWorld.name}）へ移動してから実行してください")
+            return
+        }
+        val quantizationMs = plugin.recordingSessionManager.preferredCircuitQuantization(viewer.uniqueId) ?: 100
+        plugin.recordingSessionManager.startLiveCircuit(
+            playerUuid = viewer.uniqueId,
+            worldUuid = viewer.world.uid,
+            minimum = region.minimumPoint,
+            maximum = region.maximumPoint,
+            quantizationMs = quantizationMs,
+            replacement = replacementTarget(),
+        )
+        viewer.sendMessage(
+            "§a現地回路録音を開始しました。§eコピー元の回路を起動してください。" +
+                "§7現在${quantizationMs / 100.0}RStick。起動前なら /rec we start <RStick> で変更できます。終了は /rec stop"
+        )
+    }
+
+    private fun replacementTarget(): RecordingReplacementTarget =
+        RecordingReplacementTarget(requireNotNull(song.id), song.fileName)
 
     private fun currentClipboard(): Clipboard? = try {
         WorldEdit.getInstance().sessionManager.get(BukkitAdapter.adapt(viewer)).clipboard.clipboard
