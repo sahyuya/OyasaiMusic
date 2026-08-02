@@ -136,7 +136,7 @@ class SongRepository(private val db: DatabaseManager) {
     /** GUIフェーズで追加: OP専用「審査・履歴管理GUI」用の全楽曲一覧（公開/非公開を問わず全件対象）。 */
     fun listForReview(sort: ReviewSort, limit: Int, offset: Int): List<Song> = db.transaction { conn ->
         // 審査依頼済み、または既に判定履歴を持つ楽曲だけを対象にする。
-        val sql = "SELECT * FROM songs WHERE review_requested_at IS NOT NULL OR status != ? ORDER BY ${sort.orderBy} LIMIT ? OFFSET ?"
+        val sql = "SELECT * FROM songs WHERE published = 1 AND (review_requested_at IS NOT NULL OR status != ?) ORDER BY ${sort.orderBy} LIMIT ? OFFSET ?"
         conn.prepareStatement(sql).use { ps ->
             ps.setInt(1, SongStatus.DRAFT.code)
             ps.setInt(2, limit)
@@ -149,14 +149,27 @@ class SongRepository(private val db: DatabaseManager) {
      * オリジナル審査の依頼を永続化し、提出時点で仮OKへ移す。
      * 仮OKは「作者が申請済み」の暫定状態であり、OP審査画面では許可／未審査／却下へ変更できる。
      */
-    fun requestReview(id: Long) = db.transaction { conn ->
+    /** 公開済みの未申請楽曲だけを審査へ提出する。提出できた場合だけtrueを返す。 */
+    fun requestReview(id: Long): Boolean = db.transaction { conn ->
         conn.prepareStatement(
-            "UPDATE songs SET status = ?, review_requested_at = COALESCE(review_requested_at, ?) WHERE id = ?"
+            "UPDATE songs SET status = ?, review_requested_at = ? WHERE id = ? AND published = 1 AND review_requested_at IS NULL"
         ).use { ps ->
             ps.setInt(1, SongStatus.TEMP_OK.code)
             ps.setLong(2, System.currentTimeMillis() / 1000)
             ps.setLong(3, id)
-            ps.executeUpdate()
+            ps.executeUpdate() == 1
+        }
+    }
+
+    /** OPが判定する前の申請を取り消し、下書き状態へ戻す。 */
+    fun cancelReviewRequest(id: Long): Boolean = db.transaction { conn ->
+        conn.prepareStatement(
+            "UPDATE songs SET status = ?, review_requested_at = NULL WHERE id = ? AND status = ? AND review_requested_at IS NOT NULL"
+        ).use { ps ->
+            ps.setInt(1, SongStatus.DRAFT.code)
+            ps.setLong(2, id)
+            ps.setInt(3, SongStatus.TEMP_OK.code)
+            ps.executeUpdate() == 1
         }
     }
 

@@ -81,12 +81,16 @@ class SongListMenu(
     private fun songIcon(song: Song, state: com.github.sahyuya.oyasaiMusic.gui.PlayerControllerState): org.bukkit.inventory.ItemStack {
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
         val nowPlaying = state.isPlaying && state.nowPlayingSong?.id == song.id
+        val authorName = Bukkit.getOfflinePlayer(song.authorUuid).name ?: "不明"
 
         // UI/UX設計書8章「未公開（下書き）状態: …「レコードの破片」として…」に対応。
         // 公開済みでない楽曲(自分の作成中の楽曲)は、実際のレコード種類ではなく
         // レコードの欠片(DISC_FRAGMENT_5)で視覚的に区別する（サヒュヤ氏の指示で追加）。
         if (!song.published) {
-            val lore = mutableListOf<Component>(Component.text("非公開（自分だけに表示）", NamedTextColor.DARK_GRAY))
+            val lore: MutableList<Component> = mutableListOf(
+                Component.text("作者: $authorName", NamedTextColor.GRAY),
+                Component.text("非公開（自分だけに表示）", NamedTextColor.DARK_GRAY),
+            )
             lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "試聴", "設定を開く", "-", "-")
             if (nowPlaying) lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
             return GuiItemBuilder(Material.DISC_FRAGMENT_5)
@@ -97,7 +101,10 @@ class SongListMenu(
                 .build()
         }
 
-        val lore = mutableListOf<Component>(Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY))
+        val lore: MutableList<Component> = mutableListOf(
+            Component.text("作者: $authorName", NamedTextColor.GRAY),
+            Component.text("いいね: ${song.likes}  再生数: ${song.views}", NamedTextColor.GRAY),
+        )
         lore += ActionLoreBuilder.build(viewer, prefix, ActionModeCategory.SONG_LIST, "再生", "詳細", "いいね", "お気に入り追加")
         if (nowPlaying) lore += Component.text("♪ 再生中", NamedTextColor.GREEN)
         return GuiItemBuilder(materialFor(song.recordMaterial))

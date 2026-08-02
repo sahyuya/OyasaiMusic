@@ -138,16 +138,21 @@ class RecordCommand(
             return
         }
         if (args.size < 2) {
-            player.sendMessage("§c使い方: /record start <1-4>")
+            player.sendMessage("§c使い方: /record start <0.5|1-4>")
             return
         }
-        val unit = args[1].toIntOrNull()
-        if (unit == null || unit !in 1..4) {
-            player.sendMessage("§c量子化単位は1〜4の整数で指定してください。")
+        val unit = args[1].toDoubleOrNull()
+        val quantizeStepMs = when (unit) {
+            0.5 -> 25L
+            1.0, 2.0, 3.0, 4.0 -> (unit * 100).toLong()
+            else -> null
+        }
+        if (quantizeStepMs == null) {
+            player.sendMessage("§c量子化単位は0.5または1〜4で指定してください。")
             return
         }
-        sessionManager.start(player.uniqueId, player.location, unit)
-        player.sendMessage("§a動的録音を開始しました。ノートブロックを鳴らすと自動的に記録されます。終了する場合は /record stop を実行してください。")
+        sessionManager.start(player.uniqueId, quantizeStepMs)
+        player.sendMessage("§a動的録音を開始しました。現在地から48ブロック以内のノートブロック発音を記録します。終了する場合は /record stop を実行してください。")
     }
 
     private fun handleStop(player: Player) {
@@ -231,7 +236,7 @@ class RecordCommand(
                 "§e--- OyasaiMusic /record ---",
                 "§7/record we grid <BPM>   §fグリッド型録音",
                 "§7/record we default      §f回路型(レッドストーン)録音",
-                "§7/record start <1-4>     §f動的録音の開始",
+                "§7/record start <0.5|1-4> §f動的録音の開始",
                 "§7/record stop            §f動的録音の終了・保存",
             ).joinToString("\n")
         )

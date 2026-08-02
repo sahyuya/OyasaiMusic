@@ -132,9 +132,6 @@ class OyasaiMusic : JavaPlugin() {
         server.pluginManager.registerEvents(
             NotePlayListener(
                 sessionManager = recordingSessionManager,
-                maxRadius = config.getDouble("recording.dynamic-record-radius", 32.0),
-                fullVolumeRadius = config.getDouble("recording.dynamic-record-full-volume-radius", 2.0),
-                minVolumeFloor = 20,
             ),
             this,
         )

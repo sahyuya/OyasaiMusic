@@ -34,6 +34,14 @@ object SignOverrideProcessor {
      * 分母を省略した `1` は四分音符1個分として扱う。異常値は無視する。
      */
     fun parseDelayMillis(line3: String?, quarterNoteMs: Double): Int? {
+        return parseDelayMillisExact(line3, quarterNoteMs)?.roundToInt()
+    }
+
+    /**
+     * 3行目の遅延を丸めずに返す。複数の遅延や分数拍を組み合わせる録音器では、
+     * 最終的に音源へ保存する直前までこの値を保持することで丸め誤差を1回に抑える。
+     */
+    fun parseDelayMillisExact(line3: String?, quarterNoteMs: Double): Double? {
         if (quarterNoteMs <= 0.0 || !quarterNoteMs.isFinite()) return null
         val match = DELAY_PATTERN.matchEntire(line3?.trim().orEmpty()) ?: return null
         val numerator = match.groupValues[2].toLongOrNull() ?: return null
@@ -41,7 +49,7 @@ object SignOverrideProcessor {
         if (denominator <= 0 || numerator > 10_000 || denominator > 10_000) return null
         val sign = if (match.groupValues[1] == "-") -1 else 1
         val millis = sign * quarterNoteMs * numerator.toDouble() / denominator.toDouble()
-        return if (millis.isFinite() && millis in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) millis.roundToInt() else null
+        return if (millis.isFinite() && millis in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) millis else null
     }
 
     /**
@@ -100,6 +108,14 @@ object SignOverrideProcessor {
 
     fun extractDelayFromWorldPos(world: org.bukkit.World, noteBlockPos: BlockVector3, quarterNoteMs: Double): Int? = try {
         extractDelayFromWorld(world.getBlockAt(noteBlockPos.x(), noteBlockPos.y(), noteBlockPos.z()), quarterNoteMs)
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 回路シミュレーション用の丸め前の看板遅延。 */
+    fun extractDelayMillisExactFromWorldPos(world: org.bukkit.World, noteBlockPos: BlockVector3, quarterNoteMs: Double): Double? = try {
+        val state = world.getBlockAt(noteBlockPos.x(), noteBlockPos.y(), noteBlockPos.z()).getRelative(0, 1, 0).state as? Sign ?: return null
+        parseDelayMillisExact(state.getSide(Side.FRONT).getLine(2), quarterNoteMs)
     } catch (_: Exception) {
         null
     }

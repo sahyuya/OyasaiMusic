@@ -13,7 +13,7 @@ commands:
     usage: |
       /record we grid <BPM>   - FAWEクリップボードからグリッド型録音
       /record we default      - FAWEクリップボードから回路型(レッドストーン)録音
-      /record start <1-4>     - 動的録音を開始（引数は量子化グリッドの遅延単位）
+      /record start <0.5|1-4> - 動的録音を開始（0.5は0.5tick量子化）
       /record stop            - 動的録音を終了して下書き保存
     permission: oyasaimusic.record
   musicmenu:

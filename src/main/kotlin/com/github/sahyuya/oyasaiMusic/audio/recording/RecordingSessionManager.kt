@@ -1,6 +1,5 @@
 package com.github.sahyuya.oyasaiMusic.audio
 
-import org.bukkit.Location
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -14,12 +13,12 @@ class RecordingSessionManager {
 
     fun isRecording(playerUuid: UUID): Boolean = sessions.containsKey(playerUuid)
 
-    fun start(playerUuid: UUID, origin: Location, quantizeUnit: Int): DynamicRecordingSession {
-        require(quantizeUnit in 1..4) { "量子化単位は1〜4である必要があります: $quantizeUnit" }
+    fun start(playerUuid: UUID, quantizeStepMs: Long): DynamicRecordingSession {
+        require(quantizeStepMs > 0) { "量子化間隔は正の値である必要があります: $quantizeStepMs" }
         val session = DynamicRecordingSession(
-            origin = origin.clone(),
-            startTimeMillis = System.currentTimeMillis(),
-            quantizeStepMs = quantizeUnit * 100L,
+            playerUuid = playerUuid,
+            startTimeNanos = System.nanoTime(),
+            quantizeStepMs = quantizeStepMs,
         )
         sessions[playerUuid] = session
         return session

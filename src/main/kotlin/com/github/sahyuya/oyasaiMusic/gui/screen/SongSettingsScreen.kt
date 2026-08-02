@@ -141,13 +141,23 @@ class SongSettingsScreen(
         )
         .build()
 
-    private fun submitReviewItem() = GuiItemBuilder(Material.PAPER)
-        .name(Component.text("オリジナル審査を提出", NamedTextColor.LIGHT_PURPLE))
-        .lore(
-            Component.text("クリックでOPへ審査依頼を通知します", NamedTextColor.GRAY),
-            Component.text("結果は「審査・履歴管理GUI」で確認できます", NamedTextColor.DARK_GRAY),
-        )
-        .build()
+    private fun submitReviewItem() = when {
+        song.status == SongStatus.TEMP_OK && song.reviewRequestedAt != null -> GuiItemBuilder(Material.BARRIER)
+            .name(Component.text("審査申請を取り消す", NamedTextColor.RED))
+            .lore(Component.text("クリックでOP審査への申請を取り消します", NamedTextColor.GRAY))
+            .build()
+        !song.published -> GuiItemBuilder(Material.GRAY_DYE)
+            .name(Component.text("オリジナル審査を提出", NamedTextColor.DARK_GRAY))
+            .lore(Component.text("公開後に審査へ提出できます", NamedTextColor.GRAY))
+            .build()
+        else -> GuiItemBuilder(Material.PAPER)
+            .name(Component.text("オリジナル審査を提出", NamedTextColor.LIGHT_PURPLE))
+            .lore(
+                Component.text("クリックでOPへ審査依頼を通知します", NamedTextColor.GRAY),
+                Component.text("結果は「審査・履歴管理GUI」で確認できます", NamedTextColor.DARK_GRAY),
+            )
+            .build()
+    }
 
     private fun recordTypeItem(): org.bukkit.inventory.ItemStack {
         val prefix = plugin.config.getString("bedrock.name-prefix", ".") ?: "."
@@ -386,13 +396,27 @@ class SongSettingsScreen(
 
     private fun submitForReview() {
         val songId = song.id ?: return
+        val cancelling = song.status == SongStatus.TEMP_OK && song.reviewRequestedAt != null
+        if (!song.published && !cancelling) {
+            GuiFeedback.invalid(viewer, "公開後にオリジナル審査へ提出できます")
+            return
+        }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, Runnable {
-            plugin.songRepository.requestReview(songId)
+            val changed = if (cancelling) plugin.songRepository.cancelReviewRequest(songId) else plugin.songRepository.requestReview(songId)
             Bukkit.getScheduler().runTask(plugin, Runnable {
-                viewer.sendMessage("§aOPへ審査依頼を送信しました: ${song.title}")
-                val notice = "§d[OyasaiMusic] §f${viewer.name} が「${song.title}」の審査を依頼しました。(楽曲ID: $songId)"
-                Bukkit.getOnlinePlayers().filter { it.hasPermission("oyasaimusic.admin") }.forEach { it.sendMessage(notice) }
-                applyUpdatedSong(song.copy(status = SongStatus.TEMP_OK, reviewRequestedAt = song.reviewRequestedAt ?: System.currentTimeMillis() / 1000), null)
+                if (!changed) {
+                    GuiFeedback.invalid(viewer, "審査申請の状態が変更されているため、画面を更新してください")
+                    render()
+                    return@Runnable
+                }
+                if (cancelling) {
+                    applyUpdatedSong(song.copy(status = SongStatus.DRAFT, reviewRequestedAt = null), "OP審査への申請を取り消しました。")
+                } else {
+                    viewer.sendMessage("§aOPへ審査依頼を送信しました: ${song.title}")
+                    val notice = "§d[OyasaiMusic] §f${viewer.name} が「${song.title}」の審査を依頼しました。(楽曲ID: $songId)"
+                    Bukkit.getOnlinePlayers().filter { it.hasPermission("oyasaimusic.admin") }.forEach { it.sendMessage(notice) }
+                    applyUpdatedSong(song.copy(status = SongStatus.TEMP_OK, reviewRequestedAt = System.currentTimeMillis() / 1000), null)
+                }
             })
         })
     }
