@@ -682,7 +682,179 @@ button:disabled {
 
 .piano-panel {
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: 12px;
+}
+
+.daw-workspace {
+  border-color: #343943;
+  background: #1c1f26;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 30%);
+  color: #e7e9ee;
+}
+
+.daw-commandbar {
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) auto minmax(260px, 1fr);
+  min-height: 62px;
+  align-items: stretch;
+  border-bottom: 1px solid #373c46;
+  background: #24272f;
+}
+
+.track-strip,
+.arrange-transport,
+.edit-tools {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+}
+
+.track-strip {
+  min-width: 0;
+}
+
+.track-color {
+  width: 5px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--track-color);
+}
+
+.track-number {
+  color: #7f8795;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+
+.track-strip label {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.track-strip label > span,
+.grid-select > span {
+  color: #89919f;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+}
+
+.track-strip select,
+.grid-select select {
+  min-width: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0.15rem 1.2rem 0.15rem 0;
+  color: #eef0f4;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.arrange-transport {
+  justify-content: center;
+  border-right: 1px solid #343943;
+  border-left: 1px solid #343943;
+}
+
+.transport-button,
+.tool-button,
+.automation-tab {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #aeb4c0;
+}
+
+.transport-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.transport-button:hover,
+.tool-button:hover,
+.automation-tab:hover {
+  background: #30343e;
+  color: #ffffff;
+}
+
+.transport-button.is-primary {
+  border-radius: 50%;
+  background: #436fe8;
+  color: #ffffff;
+}
+
+.transport-button.is-primary.is-playing {
+  background: #d75050;
+}
+
+.transport-time {
+  min-width: 7.6rem;
+  margin-left: 0.3rem;
+  color: #dce1eb;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.transport-bpm {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  color: #edf0f5;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.transport-bpm small {
+  color: #7f8796;
+  font-size: 0.52rem;
+}
+
+.edit-tools {
+  justify-content: flex-end;
+}
+
+.tool-button {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0.45rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.tool-button span {
+  color: #89919f;
+  font-size: 0.52rem;
+}
+
+.tool-button.is-active {
+  background: #344626;
+  color: #c9f486;
+}
+
+.grid-select {
+  display: grid;
+  gap: 0;
+  border-right: 1px solid #3b404a;
+  border-left: 1px solid #3b404a;
+  padding: 0 0.55rem;
+}
+
+.roll-viewport {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
+  background: #111318;
 }
 
 .piano-toolbar {
@@ -771,10 +943,137 @@ button:disabled {
 .piano-roll {
   display: block;
   width: 100%;
-  height: min(52vw, 430px);
-  min-height: 300px;
+  height: clamp(420px, 50vw, 570px);
+  min-height: 420px;
   cursor: crosshair;
   touch-action: none;
+}
+
+.piano-roll.is-panning {
+  cursor: grabbing;
+}
+
+.roll-vscroll {
+  width: 22px;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid #333842;
+  border-radius: 0;
+  background: #20232a;
+  accent-color: #788190;
+  cursor: ns-resize;
+  direction: rtl;
+  writing-mode: vertical-lr;
+}
+
+.automation-header {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #3a3f49;
+  background: #23262e;
+  padding-right: 0.75rem;
+}
+
+.automation-tabs {
+  display: flex;
+  align-self: stretch;
+  align-items: stretch;
+}
+
+.automation-tab {
+  border-radius: 0;
+  padding: 0 0.8rem;
+  font-size: 0.65rem;
+}
+
+.automation-tab.is-active {
+  border-bottom: 2px solid #6497f5;
+  background: #1b1e24;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.automation-header > span {
+  overflow: hidden;
+  color: #858d9b;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-splitter {
+  height: 5px;
+  border-top: 1px solid #343943;
+  border-bottom: 1px solid #343943;
+  background: #20232a;
+  cursor: ns-resize;
+}
+
+.automation-splitter:hover {
+  background: #4a5260;
+}
+
+.automation-canvas {
+  display: block;
+  width: calc(100% - 22px);
+  min-height: 110px;
+  max-height: 320px;
+  cursor: default;
+  touch-action: none;
+}
+
+.roll-horizontal-bar {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 22px;
+  height: 22px;
+  align-items: center;
+  border-top: 1px solid #353a44;
+  background: #24272e;
+}
+
+.roll-horizontal-bar input {
+  width: 100%;
+  height: 12px;
+  margin: 0;
+  accent-color: #77808e;
+  cursor: ew-resize;
+}
+
+.roll-horizontal-bar span {
+  color: #777f8d;
+  font-size: 0.55rem;
+  text-align: center;
+}
+
+.daw-shortcuts {
+  display: flex;
+  min-height: 34px;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  border-top: 1px solid #373c45;
+  background: #20232a;
+  color: #818997;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.58rem;
+}
+
+.daw-shortcuts kbd {
+  border: 1px solid #4a505c;
+  border-radius: 3px;
+  background: #16181d;
+  color: #c8cdd7;
+  padding: 0.08rem 0.24rem;
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+}
+
+.daw-shortcuts .fsharp-key {
+  margin-left: auto;
+  color: #b9e769;
 }
 
 .selection-grid,
@@ -1349,6 +1648,45 @@ footer {
     align-items: flex-start;
     flex-direction: column;
     gap: 0.75rem;
+  }
+
+  .daw-commandbar {
+    grid-template-columns: 1fr;
+  }
+
+  .arrange-transport {
+    order: -1;
+    border: 0;
+    border-bottom: 1px solid #343943;
+  }
+
+  .track-strip,
+  .edit-tools {
+    justify-content: center;
+  }
+
+  .piano-roll {
+    height: 440px;
+  }
+
+  .automation-header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-right: 0;
+  }
+
+  .automation-tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .automation-tab {
+    min-height: 38px;
+  }
+
+  .automation-header > span,
+  .daw-shortcuts {
+    display: none;
   }
 
   .legend {

@@ -86,9 +86,10 @@ export function deleteEmptyParts(parts, assignments) {
   return parts.filter((part) => used.has(part.id));
 }
 
-export function convertMidi(midi, parts, assignments, userSettings = {}) {
+export function convertMidi(midi, parts, assignments, userSettings = {}, automation = {}) {
   const settings = { ...DEFAULT_SETTINGS, ...userSettings };
   const partById = new Map(parts.map((part) => [part.id, part]));
+  const automationByPart = normalizeAutomation(automation);
   const converted = [];
   const dropped = { outOfRange: 0, muted: 0, invalidPart: 0, duplicate: 0 };
   let folded = 0;
@@ -135,13 +136,18 @@ export function convertMidi(midi, parts, assignments, userSettings = {}) {
       }
     }
 
-    const channelScale = (source.velocity / 127)
-      * (source.channelVolume / 127)
-      * (source.expression / 127)
+    const partAutomation = automationByPart.get(part.id) || {};
+    const velocity = automationValueSorted(partAutomation.velocity, source.startMs, source.velocity);
+    const channelVolume = automationValueSorted(partAutomation.volume, source.startMs, source.channelVolume);
+    const expression = automationValueSorted(partAutomation.expression, source.startMs, source.expression);
+    const sourcePan = automationValueSorted(partAutomation.pan, source.startMs, source.pan);
+    const channelScale = (velocity / 127)
+      * (channelVolume / 127)
+      * (expression / 127)
       * (Math.max(0, part.volume) / 100);
     const volume = Math.max(0, Math.min(100, Math.round(channelScale * 100)));
     const pan = settings.preservePan
-      ? Math.max(-100, Math.min(100, Math.round(((source.pan - 64) / 63) * 100)))
+      ? Math.max(-100, Math.min(100, Math.round(((sourcePan - 64) / 63) * 100)))
       : 0;
     const note = {
       timeMs: Math.max(0, Math.round(source.startMs - offsetMs)),
@@ -195,6 +201,47 @@ export function convertMidi(midi, parts, assignments, userSettings = {}) {
       offsetMs,
     },
   };
+}
+
+export function automationValue(points, timeMs, fallback) {
+  if (!Array.isArray(points) || points.length === 0) return clampMidiControl(fallback);
+  const sorted = [...points].sort((a, b) => a.timeMs - b.timeMs);
+  return automationValueSorted(sorted, timeMs, fallback);
+}
+
+function automationValueSorted(sorted, timeMs, fallback) {
+  if (!Array.isArray(sorted) || sorted.length === 0) return clampMidiControl(fallback);
+  if (timeMs <= sorted[0].timeMs) return clampMidiControl(sorted[0].value);
+  if (timeMs >= sorted.at(-1).timeMs) return clampMidiControl(sorted.at(-1).value);
+  let low = 0;
+  let high = sorted.length - 1;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (sorted[middle].timeMs <= timeMs) low = middle;
+    else high = middle;
+  }
+  const before = sorted[low];
+  const after = sorted[high];
+  const ratio = (timeMs - before.timeMs) / Math.max(1, after.timeMs - before.timeMs);
+  return clampMidiControl(before.value + (after.value - before.value) * ratio);
+}
+
+function normalizeAutomation(automation) {
+  const normalized = new Map();
+  for (const [partId, lanes] of Object.entries(automation || {})) {
+    const part = {};
+    for (const lane of ["velocity", "volume", "pan", "expression"]) {
+      part[lane] = Array.isArray(lanes?.[lane])
+        ? [...lanes[lane]].sort((a, b) => a.timeMs - b.timeMs)
+        : [];
+    }
+    normalized.set(partId, part);
+  }
+  return normalized;
+}
+
+function clampMidiControl(value) {
+  return Math.max(0, Math.min(127, Math.round(Number(value) || 0)));
 }
 
 export function recommendGlobalTranspose(notes) {

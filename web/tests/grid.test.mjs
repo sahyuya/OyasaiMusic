@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTimeGrid, isMinecraftBoundaryPitch, nearestGridTime } from "../src/grid.js";
+import { buildRulerGrid, buildTimeGrid, isMinecraftBoundaryPitch, nearestGridTime } from "../src/grid.js";
 
 test("120 BPMの16分音符グリッドを125ms間隔で作る", () => {
   const grid = buildTimeGrid({
@@ -32,4 +32,22 @@ test("Minecraft音ブロックの音域境界をF♯として判定する", () =
   assert.equal(isMinecraftBoundaryPitch(54), true);
   assert.equal(isMinecraftBoundaryPitch(66), true);
   assert.equal(isMinecraftBoundaryPitch(60), false);
+});
+
+test("4/4拍子のルーラーへ小節番号と拍を付ける", () => {
+  const marks = buildRulerGrid({
+    tempos: [{ tick: 0, timeMs: 0, tempo: 500_000, bpm: 120 }],
+    timeSignatures: [{ tick: 0, numerator: 4, denominator: 4 }],
+    ppq: 480,
+    startMs: 0,
+    endMs: 2500,
+    subdivision: 1,
+  });
+  assert.deepEqual(marks.slice(0, 5).map(({ timeMs, bar, beat, isBar }) => ({ timeMs, bar, beat, isBar })), [
+    { timeMs: 0, bar: 1, beat: 1, isBar: true },
+    { timeMs: 500, bar: 1, beat: 2, isBar: false },
+    { timeMs: 1000, bar: 1, beat: 3, isBar: false },
+    { timeMs: 1500, bar: 1, beat: 4, isBar: false },
+    { timeMs: 2000, bar: 2, beat: 1, isBar: true },
+  ]);
 });

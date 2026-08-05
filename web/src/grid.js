@@ -11,6 +11,79 @@ export function buildTimeGrid({ tempos = [], ppq = 480, startMs = 0, endMs = 100
     : buildMillisecondGrid(normalized, safeStart, safeEnd, safeSubdivision);
 }
 
+/** ピアノロール上部へ表示する小節・拍付きの時間目盛りを作る。 */
+export function buildRulerGrid({
+  tempos = [],
+  timeSignatures = [],
+  ppq = 480,
+  startMs = 0,
+  endMs = 1000,
+  subdivision = 4,
+}) {
+  const safeStart = Math.max(0, Number(startMs) || 0);
+  const safeEnd = Math.max(safeStart, Number(endMs) || safeStart);
+  const safePpq = Math.max(1, Number(ppq) || 480);
+  const safeSubdivision = Math.max(1, Math.min(16, Number(subdivision) || 4));
+  const normalizedTempos = normalizeTempos(tempos);
+  const signatures = normalizeTimeSignatures(timeSignatures);
+  const monotonicTicks = normalizedTempos.every((tempo, index) => index === 0 || tempo.tick >= normalizedTempos[index - 1].tick);
+  if (!monotonicTicks) {
+    return buildTimeBasedRuler(normalizedTempos, signatures[0], safeStart, safeEnd, safeSubdivision);
+  }
+  const startTick = timeToTick(safeStart, normalizedTempos, safePpq);
+  const endTick = timeToTick(safeEnd, normalizedTempos, safePpq);
+  const quarterStep = safePpq / safeSubdivision;
+  const firstTick = Math.floor(startTick / quarterStep) * quarterStep;
+  const estimated = Math.max(1, Math.ceil((endTick - firstTick) / quarterStep));
+  const stride = Math.max(1, Math.ceil(estimated / 5000));
+  const marks = [];
+  for (let tick = firstTick; tick <= endTick + quarterStep; tick += quarterStep * stride) {
+    const timeMs = tickToTime(tick, normalizedTempos, safePpq);
+    if (timeMs < safeStart - 1 || timeMs > safeEnd + 1) continue;
+    const musical = musicalPosition(tick, signatures, safePpq);
+    marks.push({
+      timeMs: Math.max(0, Math.round(timeMs * 1000) / 1000),
+      tick,
+      bar: musical.bar,
+      beat: musical.beat,
+      isBar: musical.isBar,
+      isBeat: musical.isBeat,
+    });
+  }
+  return marks;
+}
+
+function buildTimeBasedRuler(tempos, signature, startMs, endMs, subdivision) {
+  const times = buildMillisecondGrid(tempos, startMs, endMs, subdivision);
+  const quarterPerBar = signature.numerator * 4 / signature.denominator;
+  return times.map((timeMs) => {
+    const quarter = musicalQuartersAtTime(timeMs, tempos);
+    const roundedSubdivision = Math.round(quarter * subdivision) / subdivision;
+    const withinBar = ((roundedSubdivision % quarterPerBar) + quarterPerBar) % quarterPerBar;
+    const withinBeat = ((roundedSubdivision % 1) + 1) % 1;
+    return {
+      timeMs,
+      tick: null,
+      bar: Math.floor(roundedSubdivision / quarterPerBar) + 1,
+      beat: Math.floor(withinBar) + 1,
+      isBar: withinBar < 0.001 || quarterPerBar - withinBar < 0.001,
+      isBeat: withinBeat < 0.001 || 1 - withinBeat < 0.001,
+    };
+  });
+}
+
+function musicalQuartersAtTime(timeMs, tempos) {
+  let quarters = 0;
+  for (let index = 0; index < tempos.length; index += 1) {
+    const tempo = tempos[index];
+    const segmentStart = tempo.timeMs;
+    const segmentEnd = Math.min(timeMs, tempos[index + 1]?.timeMs ?? timeMs);
+    if (segmentEnd > segmentStart) quarters += (segmentEnd - segmentStart) / (60_000 / tempo.bpm);
+    if (timeMs < (tempos[index + 1]?.timeMs ?? Number.POSITIVE_INFINITY)) break;
+  }
+  return Math.max(0, quarters);
+}
+
 export function nearestGridTime(timeMs, gridTimes) {
   if (!gridTimes?.length) return Math.max(0, timeMs);
   let low = 0;
@@ -73,6 +146,46 @@ function normalizeTempos(tempos) {
     }))
     .sort((a, b) => a.timeMs - b.timeMs);
   return normalized.length ? normalized : [{ tick: 0, timeMs: 0, tempo: 500_000, bpm: 120 }];
+}
+
+function normalizeTimeSignatures(timeSignatures) {
+  const rows = (timeSignatures || [])
+    .map((signature) => ({
+      tick: Math.max(0, Number(signature.tick) || 0),
+      numerator: Math.max(1, Number(signature.numerator) || 4),
+      denominator: [1, 2, 4, 8, 16, 32].includes(Number(signature.denominator))
+        ? Number(signature.denominator)
+        : 4,
+    }))
+    .sort((a, b) => a.tick - b.tick);
+  if (!rows.length || rows[0].tick !== 0) rows.unshift({ tick: 0, numerator: 4, denominator: 4 });
+  return rows.filter((row, index) => index === 0 || row.tick !== rows[index - 1].tick);
+}
+
+function musicalPosition(tick, signatures, ppq) {
+  let barOffset = 0;
+  let active = signatures[0];
+  for (let index = 0; index < signatures.length; index += 1) {
+    const signature = signatures[index];
+    const next = signatures[index + 1];
+    if (tick < signature.tick) break;
+    active = signature;
+    if (!next || tick < next.tick) break;
+    const ticksPerBeat = ppq * 4 / signature.denominator;
+    const ticksPerBar = ticksPerBeat * signature.numerator;
+    barOffset += Math.max(0, Math.round((next.tick - signature.tick) / ticksPerBar));
+  }
+  const ticksPerBeat = ppq * 4 / active.denominator;
+  const ticksPerBar = ticksPerBeat * active.numerator;
+  const local = Math.max(0, tick - active.tick);
+  const withinBar = ((local % ticksPerBar) + ticksPerBar) % ticksPerBar;
+  const epsilon = 0.001;
+  return {
+    bar: barOffset + Math.floor(local / ticksPerBar) + 1,
+    beat: Math.floor(withinBar / ticksPerBeat) + 1,
+    isBar: withinBar < epsilon || ticksPerBar - withinBar < epsilon,
+    isBeat: (withinBar % ticksPerBeat) < epsilon || ticksPerBeat - (withinBar % ticksPerBeat) < epsilon,
+  };
 }
 
 function tickToTime(tick, tempos, ppq) {

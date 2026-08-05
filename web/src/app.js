@@ -9,10 +9,11 @@ import {
   splitSelectionIntoPart,
 } from "./converter.js";
 import { NOTE_BLOCK_INSTRUMENTS, midiNoteName } from "./instruments.js";
-import { buildTimeGrid, nearestGridTime } from "./grid.js";
+import { buildRulerGrid, buildTimeGrid, nearestGridTime } from "./grid.js";
 import { mergeMidiDocuments } from "./midi-merge.js";
 import { encodeOyasaiPackage, downloadBlob } from "./oyasai-format.js";
 import { PianoRoll } from "./piano-roll.js";
+import { AUTOMATION_LANES, AutomationLane } from "./automation-lane.js";
 import { clearLatestSession, loadLatestSession, saveLatestSession } from "./session-store.js";
 
 const workspace = document.querySelector("#workspace");
@@ -25,6 +26,10 @@ const state = {
   conversion: null,
   title: "",
   roll: null,
+  automationRoll: null,
+  automation: {},
+  automationLane: "velocity",
+  automationLaneHeight: 170,
   view: { startMs: 0, endMs: 1000, minPitch: 36, maxPitch: 84 },
   sourcePitchRange: { min: 36, max: 84 },
   editorMode: "all",
@@ -39,6 +44,7 @@ const state = {
   sessionTimer: null,
   sessionSavingEnabled: true,
   suspendedSession: null,
+  keyHandler: null,
 };
 
 const preview = new PreviewPlayer({
@@ -50,13 +56,16 @@ const preview = new PreviewPlayer({
     if (progress) progress.value = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
     if (time) time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
     if (seek && !seek.matches(":active")) seek.value = state.previewPositionMs;
-    state.roll?.setPlayhead(state.previewPositionMs);
+    state.roll?.setPlayhead(previewSourceTime());
+    updateArrangeTransport();
   },
   onStop() {
     updatePreviewButton(false);
+    updateArrangeTransport();
     scheduleSessionSave();
   },
 });
+const keyboardPreview = new PreviewPlayer();
 
 boot();
 
@@ -77,8 +86,13 @@ function renderUpload() {
   if (state.midi) state.suspendedSession = createSessionSnapshot();
   state.worker?.terminate();
   preview.stop(false);
-  state.midi = null;
+  state.roll?.destroy();
+  state.automationRoll?.destroy();
   state.roll = null;
+  state.automationRoll = null;
+  if (state.keyHandler) document.removeEventListener("keydown", state.keyHandler);
+  state.keyHandler = null;
+  state.midi = null;
   workspace.innerHTML = `
     <section class="upload-card" aria-labelledby="upload-title">
       <div class="upload-copy">
@@ -305,6 +319,9 @@ function restoreSession(snapshot, notify = true) {
   state.horizontalZoom = clampNumber(snapshot.horizontalZoom, 1, 32, 1);
   state.verticalZoom = clampNumber(snapshot.verticalZoom, 1, 8, 1);
   state.previewPositionMs = clampNumber(snapshot.previewPositionMs, 0, state.midi.durationMs, 0);
+  state.automation = snapshot.automation && typeof snapshot.automation === "object" ? snapshot.automation : {};
+  state.automationLane = AUTOMATION_LANES[snapshot.automationLane] ? snapshot.automationLane : "velocity";
+  state.automationLaneHeight = clampNumber(snapshot.automationLaneHeight, 110, 320, 170);
   state.sessionSavingEnabled = true;
   state.suspendedSession = null;
   updateSourcePitchRange();
@@ -331,6 +348,9 @@ function createSessionSnapshot() {
     horizontalZoom: state.horizontalZoom,
     verticalZoom: state.verticalZoom,
     previewPositionMs: state.previewPositionMs,
+    automation: state.automation,
+    automationLane: state.automationLane,
+    automationLaneHeight: state.automationLaneHeight,
   };
 }
 
@@ -382,6 +402,9 @@ function initializeEditor(midi) {
   state.horizontalZoom = 1;
   state.verticalZoom = 1;
   state.previewPositionMs = 0;
+  state.automation = {};
+  state.automationLane = "velocity";
+  state.automationLaneHeight = 170;
   state.sessionSavingEnabled = true;
   let minPitch = 127;
   let maxPitch = 0;
@@ -421,6 +444,10 @@ function updateSourcePitchRange() {
 
 function renderEditor() {
   preview.stop(false);
+  state.roll?.destroy();
+  state.automationRoll?.destroy();
+  state.roll = null;
+  state.automationRoll = null;
   const midi = state.midi;
   const recommendedTranspose = recommendGlobalTranspose(midi.notes);
   workspace.innerHTML = `
@@ -455,8 +482,8 @@ function renderEditor() {
 
     <section id="arrange" class="editor-section">
       <div class="section-heading">
-        <div><span class="step-label">01 · ARRANGE</span><h2>音を選んで、パートに分ける</h2></div>
-        <p>ドラッグで範囲選択、クリックで1音選択。Shiftを押すと選択へ追加できます。</p>
+        <div><span class="step-label">01 · ARRANGE</span><h2>MIDIを演奏しながら整える</h2></div>
+        <p>上の小節ルーラーをクリックして再生。中央は縦スクロール、ルーラーは横スクロール、Ctrl / Shift＋ホイールで拡大できます。</p>
       </div>
       <div class="editor-modebar" role="group" aria-label="パート表示モード">
         <button type="button" data-editor-mode="all" class="mode-button ${state.editorMode === "all" ? "is-active" : ""}">全パートを重ねて編集</button>
@@ -464,31 +491,50 @@ function renderEditor() {
         <span>${state.editorMode === "all" ? "すべてのパートを同じグリッドへ表示しています" : "選択したパートのノートだけを表示しています"}</span>
       </div>
       <div id="part-editor-tabs" class="part-editor-tabs" ${state.editorMode === "part" ? "" : "hidden"}>${partEditorTabs()}</div>
-      <div class="piano-panel">
-        <div class="piano-toolbar">
-          <div class="view-fields">
-            <label>表示開始 <input id="view-start" type="number" min="0" step="0.1" value="${round(state.view.startMs / 1000, 2)}" /> 秒</label>
-            <label>表示終了 <input id="view-end" type="number" min="0" step="0.1" value="${round(state.view.endMs / 1000, 2)}" /> 秒</label>
-            <button type="button" id="apply-view" class="compact-button">表示を更新</button>
-            <button type="button" id="show-all" class="compact-button">曲全体</button>
+      <div id="daw-workspace" class="piano-panel daw-workspace" tabindex="0" aria-label="MIDI編集ワークスペース">
+        <header class="daw-commandbar">
+          <div class="track-strip">
+            <span class="track-color" style="--track-color:${escapeAttribute(activePart()?.color || "#7b8b6b")}"></span>
+            <span class="track-number">01</span>
+            <label><span>編集パート</span><select id="automation-part">${partControlOptions()}</select></label>
           </div>
-          <div class="zoom-fields">
-            <label>横方向<input id="horizontal-zoom" type="range" min="1" max="32" step="0.25" value="${state.horizontalZoom}" /><output>${formatDecimal(state.horizontalZoom)}×</output></label>
-            <label>縦方向<input id="vertical-zoom" type="range" min="1" max="8" step="0.25" value="${state.verticalZoom}" /><output>${formatDecimal(state.verticalZoom)}×</output></label>
-            <label>縦位置<input id="pitch-center" type="range" min="0" max="127" step="1" value="${Math.round((state.view.minPitch + state.view.maxPitch) / 2)}" /></label>
+          <div class="arrange-transport" aria-label="試聴操作">
+            <button type="button" id="transport-start" class="transport-button" title="先頭へ移動 (Home)" aria-label="先頭へ移動">|◀</button>
+            <button type="button" id="transport-play" class="transport-button is-primary" title="再生・一時停止 (Space)" aria-label="再生">▶</button>
+            <button type="button" id="transport-stop" class="transport-button" title="停止 (Escape)" aria-label="停止">■</button>
+            <output id="transport-time" class="transport-time">${formatTimeDetailed(state.previewPositionMs)}</output>
+            <span class="transport-bpm"><small>BPM</small><b>${formatDecimal(midi.tempos[0]?.bpm || 120)}</b></span>
           </div>
-          <div class="grid-fields">
-            <label>時間グリッド<select id="grid-subdivision">
-              <option value="1" ${state.gridSubdivision === 1 ? "selected" : ""}>4分音符</option>
-              <option value="2" ${state.gridSubdivision === 2 ? "selected" : ""}>8分音符</option>
-              <option value="4" ${state.gridSubdivision === 4 ? "selected" : ""}>16分音符</option>
-              <option value="8" ${state.gridSubdivision === 8 ? "selected" : ""}>32分音符</option>
+          <div class="edit-tools">
+            <button type="button" id="snap-button" class="tool-button ${state.snapToGrid ? "is-active" : ""}" title="グリッド吸着を切り替え (S)" aria-pressed="${state.snapToGrid}">⌁ <span>SNAP</span></button>
+            <label class="grid-select"><span>GRID</span><select id="grid-subdivision">
+              <option value="1" ${state.gridSubdivision === 1 ? "selected" : ""}>1/4</option>
+              <option value="2" ${state.gridSubdivision === 2 ? "selected" : ""}>1/8</option>
+              <option value="4" ${state.gridSubdivision === 4 ? "selected" : ""}>1/16</option>
+              <option value="8" ${state.gridSubdivision === 8 ? "selected" : ""}>1/32</option>
             </select></label>
-            <label class="snap-check"><input id="snap-to-grid" type="checkbox" ${state.snapToGrid ? "checked" : ""} />範囲をグリッドへ補正</label>
+            <button type="button" id="fit-width" class="tool-button" title="曲全体を横表示 (W)">↔ <span>FIT</span></button>
+            <button type="button" id="fit-height" class="tool-button" title="全音域を縦表示 (H)">↕ <span>FIT</span></button>
           </div>
-          <div class="legend"><span></span>横線は全音階 · 太線と目盛りはMinecraft音域のF♯</div>
+        </header>
+        <div class="roll-viewport">
+          <canvas id="piano-roll" class="piano-roll" height="480" aria-label="鍵盤付きMIDIピアノロール。小節ルーラーをクリックするとその位置から再生します"></canvas>
+          <input id="roll-vscroll" class="roll-vscroll" type="range" min="0" max="127" step="1" value="${Math.round((state.view.minPitch + state.view.maxPitch) / 2)}" aria-label="ピアノロールの縦位置" />
         </div>
-        <canvas id="piano-roll" class="piano-roll" height="430" aria-label="MIDIピアノロール。ドラッグまたはクリックでノートを選択できます"></canvas>
+        <div class="automation-header">
+          <div class="automation-tabs" role="tablist" aria-label="MIDIコントロールレーン">${automationLaneTabs()}</div>
+          <span id="automation-target">${escapeHtml(activePart()?.name || "パートなし")}へ適用 · Ctrl＋クリックで制御点追加 · 右クリックで削除</span>
+        </div>
+        <div id="automation-splitter" class="automation-splitter" title="ドラッグしてコントロールレーンの高さを変更"></div>
+        <canvas id="automation-canvas" class="automation-canvas" height="${state.automationLaneHeight}" style="height:${state.automationLaneHeight}px" aria-label="MIDIコントロールレーン。Ctrlを押しながらクリックすると制御点を追加できます"></canvas>
+        <div class="roll-horizontal-bar">
+          <span aria-hidden="true">◀</span>
+          <input id="roll-hscroll" type="range" min="0" max="1000" step="1" value="${horizontalScrollValue()}" aria-label="ピアノロールの横位置" />
+          <span aria-hidden="true">▶</span>
+        </div>
+        <footer class="daw-shortcuts">
+          <span><kbd>Space</kbd> 再生 / 停止</span><span><kbd>Wheel</kbd> 縦移動</span><span><kbd>Ctrl</kbd>＋<kbd>Wheel</kbd> 横拡大</span><span><kbd>Shift</kbd>＋<kbd>Wheel</kbd> 縦拡大</span><span><kbd>Middle Drag</kbd> 自由移動</span><span class="fsharp-key">F♯ Minecraft境界</span>
+        </footer>
       </div>
 
       <div class="selection-grid">
@@ -618,36 +664,36 @@ function bindEditorEvents(recommendedTranspose) {
     button.addEventListener("click", () => setEditorMode(button.dataset.editorMode));
   });
   bindPartEditorTabs();
-  document.querySelector("#apply-view").addEventListener("click", applyViewInputs);
-  document.querySelector("#show-all").addEventListener("click", () => {
-    state.view.startMs = 0;
-    state.view.endMs = Math.max(1000, state.midi.durationMs);
-    state.view.minPitch = state.sourcePitchRange.min;
-    state.view.maxPitch = state.sourcePitchRange.max;
-    state.horizontalZoom = 1;
-    state.verticalZoom = 1;
-    document.querySelector("#view-start").value = 0;
-    document.querySelector("#view-end").value = round(state.view.endMs / 1000, 2);
-    document.querySelector("#horizontal-zoom").value = 1;
-    document.querySelector("#vertical-zoom").value = 1;
-    document.querySelector("#horizontal-zoom").nextElementSibling.textContent = "1×";
-    document.querySelector("#vertical-zoom").nextElementSibling.textContent = "1×";
-    refreshRoll();
-    scheduleSessionSave();
-  });
-  document.querySelector("#horizontal-zoom").addEventListener("input", (event) => applyHorizontalZoom(event.target));
-  document.querySelector("#vertical-zoom").addEventListener("input", (event) => applyVerticalZoom(event.target));
-  document.querySelector("#pitch-center").addEventListener("input", (event) => applyVerticalZoom(document.querySelector("#vertical-zoom"), Number(event.target.value)));
   document.querySelector("#grid-subdivision").addEventListener("change", (event) => {
     state.gridSubdivision = Number(event.target.value);
     refreshRoll();
     scheduleSessionSave();
   });
-  document.querySelector("#snap-to-grid").addEventListener("change", (event) => {
-    state.snapToGrid = event.target.checked;
+  document.querySelector("#snap-button").addEventListener("click", toggleSnap);
+  document.querySelector("#fit-width").addEventListener("click", fitViewWidth);
+  document.querySelector("#fit-height").addEventListener("click", fitViewHeight);
+  document.querySelector("#transport-start").addEventListener("click", () => seekAndMaybePlay(0, false));
+  document.querySelector("#transport-play").addEventListener("click", togglePreview);
+  document.querySelector("#transport-stop").addEventListener("click", stopPreview);
+  document.querySelector("#automation-part").addEventListener("change", (event) => {
+    state.activePartId = event.target.value;
     refreshRoll();
+    refreshAutomationLane();
+    updateAutomationTarget();
     scheduleSessionSave();
   });
+  document.querySelectorAll("[data-automation-lane]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.automationLane = button.dataset.automationLane;
+      document.querySelectorAll("[data-automation-lane]").forEach((candidate) => candidate.classList.toggle("is-active", candidate === button));
+      refreshAutomationLane();
+      scheduleSessionSave();
+    });
+  });
+  document.querySelector("#roll-vscroll").addEventListener("input", (event) => centerPitchView(Number(event.target.value)));
+  document.querySelector("#roll-hscroll").addEventListener("input", (event) => setHorizontalScroll(Number(event.target.value)));
+  bindAutomationSplitter();
+  bindDawShortcuts();
   document.querySelector("#select-range").addEventListener("click", () => selectByInputs(false));
   document.querySelector("#add-range").addEventListener("click", () => selectByInputs(true));
   document.querySelector("#clear-selection").addEventListener("click", () => setSelection(new Set()));
@@ -697,14 +743,26 @@ function initializeRoll() {
   const canvas = document.querySelector("#piano-roll");
   state.roll = new PianoRoll(canvas, {
     onSelectionChange: setSelection,
+    onSeek: (timeMs, options) => seekAndMaybePlay(timeMs, options.play),
+    onNavigate: navigateRoll,
+    onKeyboardPreview: previewPianoKey,
     getSelected: () => state.selectedIds,
     getColor(noteId) {
       const part = state.parts.find((candidate) => candidate.id === state.assignments[noteId]);
       return part?.color || "#777";
     },
   });
+  state.automationRoll = new AutomationLane(document.querySelector("#automation-canvas"), {
+    onChange(points) {
+      const partId = state.activePartId;
+      if (!partId) return;
+      state.automation[partId] ||= {};
+      state.automation[partId][state.automationLane] = points;
+      scheduleRecalculation();
+    },
+  });
   refreshRoll();
-  state.roll.setPlayhead(state.previewPositionMs);
+  state.roll.setPlayhead(previewSourceTime());
 }
 
 function refreshRoll() {
@@ -716,8 +774,23 @@ function refreshRoll() {
     endMs: state.view.endMs,
     subdivision: state.gridSubdivision,
   });
-  state.roll.setData(editableNotes(), state.view, { gridTimes, snapToGrid: state.snapToGrid });
-  state.roll.setPlayhead(state.previewPositionMs);
+  const rulerMarks = buildRulerGrid({
+    tempos: state.midi.tempos,
+    timeSignatures: state.midi.timeSignatures,
+    ppq: state.midi.ppq,
+    startMs: state.view.startMs,
+    endMs: state.view.endMs,
+    subdivision: state.gridSubdivision,
+  });
+  state.roll.setData(editableNotes(), state.view, {
+    gridTimes,
+    rulerMarks,
+    ghostNotes: ghostNotes(),
+    snapToGrid: state.snapToGrid,
+  });
+  state.roll.setPlayhead(previewSourceTime());
+  refreshAutomationLane(gridTimes);
+  syncRollScrollbars();
 }
 
 function editableNotes() {
@@ -725,51 +798,238 @@ function editableNotes() {
   return state.midi.notes.filter((note) => state.assignments[note.id] === state.activePartId);
 }
 
-function applyViewInputs() {
-  const start = clampNumber(document.querySelector("#view-start").value, 0, state.midi.durationMs / 1000, 0);
-  const end = clampNumber(document.querySelector("#view-end").value, start + 0.01, Math.max(start + 0.01, state.midi.durationMs / 1000), state.midi.durationMs / 1000);
-  state.view.startMs = start * 1000;
-  state.view.endMs = end * 1000;
-  state.horizontalZoom = Math.max(1, Math.min(32, Math.max(1000, state.midi.durationMs) / Math.max(1, state.view.endMs - state.view.startMs)));
-  document.querySelector("#view-start").value = round(start, 2);
-  document.querySelector("#view-end").value = round(end, 2);
-  document.querySelector("#horizontal-zoom").value = state.horizontalZoom;
-  document.querySelector("#horizontal-zoom").nextElementSibling.textContent = `${formatDecimal(state.horizontalZoom)}×`;
-  refreshRoll();
-  scheduleSessionSave();
+function ghostNotes() {
+  if (state.editorMode !== "part" || !state.activePartId) return [];
+  return state.midi.notes.filter((note) => state.assignments[note.id] !== state.activePartId);
 }
 
-function applyHorizontalZoom(input) {
-  state.horizontalZoom = clampNumber(input.value, 1, 32, 1);
-  input.nextElementSibling.textContent = `${formatDecimal(state.horizontalZoom)}×`;
+function refreshAutomationLane(existingGrid = null) {
+  if (!state.automationRoll) return;
+  const gridTimes = existingGrid || buildTimeGrid({
+    tempos: state.midi.tempos,
+    ppq: state.midi.ppq,
+    startMs: state.view.startMs,
+    endMs: state.view.endMs,
+    subdivision: state.gridSubdivision,
+  });
+  const partId = state.activePartId;
+  const notes = partId
+    ? state.midi.notes.filter((note) => state.assignments[note.id] === partId)
+    : [];
+  state.automationRoll.setData({
+    notes,
+    selectedIds: state.selectedIds,
+    view: state.view,
+    gridTimes,
+    lane: state.automationLane,
+    points: state.automation?.[partId]?.[state.automationLane] || [],
+  });
+}
+
+function navigateRoll(action) {
+  if (!state.midi) return;
+  const timeSpan = Math.max(1, state.view.endMs - state.view.startMs);
+  const pitchSpan = Math.max(1, state.view.maxPitch - state.view.minPitch + 1);
+  if (action.type === "zoom-time") {
+    zoomTime(action.direction > 0 ? 1.2 : 1 / 1.2, action.anchorTime);
+  } else if (action.type === "zoom-pitch") {
+    zoomPitch(action.direction > 0 ? 1.18 : 1 / 1.18, action.anchorPitch);
+  } else if (action.type === "scroll-time") {
+    moveTimeWindow(Math.sign(action.amount || action.direction) * timeSpan * 0.12);
+  } else if (action.type === "scroll-pitch") {
+    movePitchWindow(-Math.sign(action.amount || action.direction) * Math.max(1, pitchSpan * 0.09));
+  } else if (action.type === "pan") {
+    moveTimeWindow((-action.deltaX / Math.max(1, action.plot.width)) * timeSpan, false);
+    movePitchWindow((action.deltaY / Math.max(1, action.plot.height)) * pitchSpan, false);
+    refreshRoll();
+    scheduleSessionSave();
+  }
+}
+
+function zoomTime(scale, anchorTime = null) {
   const fullDuration = Math.max(1000, state.midi.durationMs);
-  const visibleDuration = Math.max(100, fullDuration / state.horizontalZoom);
-  const currentCenter = (state.view.startMs + state.view.endMs) / 2;
-  const maximumStart = Math.max(0, fullDuration - visibleDuration);
-  state.view.startMs = Math.max(0, Math.min(maximumStart, currentCenter - visibleDuration / 2));
-  state.view.endMs = Math.min(fullDuration, state.view.startMs + visibleDuration);
-  document.querySelector("#view-start").value = round(state.view.startMs / 1000, 3);
-  document.querySelector("#view-end").value = round(state.view.endMs / 1000, 3);
+  const oldSpan = Math.max(1, state.view.endMs - state.view.startMs);
+  const newSpan = Math.max(80, Math.min(fullDuration, oldSpan * scale));
+  const anchor = Math.max(0, Math.min(fullDuration, Number(anchorTime) || (state.view.startMs + oldSpan / 2)));
+  const anchorRatio = Math.max(0, Math.min(1, (anchor - state.view.startMs) / oldSpan));
+  let start = anchor - anchorRatio * newSpan;
+  start = Math.max(0, Math.min(fullDuration - newSpan, start));
+  state.view.startMs = start;
+  state.view.endMs = start + newSpan;
+  state.horizontalZoom = fullDuration / newSpan;
   refreshRoll();
   scheduleSessionSave();
 }
 
-function applyVerticalZoom(input, requestedCenter = null) {
-  state.verticalZoom = clampNumber(input.value, 1, 8, 1);
-  input.nextElementSibling.textContent = `${formatDecimal(state.verticalZoom)}×`;
+function zoomPitch(scale, anchorPitch = null) {
   const fullMinimum = state.sourcePitchRange.min;
   const fullMaximum = state.sourcePitchRange.max;
   const fullSpan = Math.max(1, fullMaximum - fullMinimum + 1);
-  const visibleSpan = Math.max(1, Math.min(fullSpan, Math.round(fullSpan / state.verticalZoom)));
-  const centerControl = document.querySelector("#pitch-center");
-  const center = requestedCenter ?? (Number(centerControl.value) || Math.round((state.view.minPitch + state.view.maxPitch) / 2));
-  let minimum = Math.round(center - visibleSpan / 2);
-  minimum = Math.max(fullMinimum, Math.min(fullMaximum - visibleSpan + 1, minimum));
-  state.view.minPitch = Math.max(0, minimum);
-  state.view.maxPitch = Math.min(127, state.view.minPitch + visibleSpan - 1);
-  centerControl.value = Math.round((state.view.minPitch + state.view.maxPitch) / 2);
+  const oldSpan = Math.max(1, state.view.maxPitch - state.view.minPitch + 1);
+  const newSpan = Math.max(5, Math.min(fullSpan, Math.round(oldSpan * scale)));
+  const anchor = Math.max(fullMinimum, Math.min(fullMaximum, Number(anchorPitch) || (state.view.minPitch + state.view.maxPitch) / 2));
+  const anchorRatio = Math.max(0, Math.min(1, (anchor - state.view.minPitch) / oldSpan));
+  let minimum = Math.round(anchor - anchorRatio * newSpan);
+  minimum = Math.max(fullMinimum, Math.min(fullMaximum - newSpan + 1, minimum));
+  state.view.minPitch = minimum;
+  state.view.maxPitch = minimum + newSpan - 1;
+  state.verticalZoom = fullSpan / newSpan;
   refreshRoll();
   scheduleSessionSave();
+}
+
+function moveTimeWindow(deltaMs, refresh = true) {
+  const fullDuration = Math.max(1000, state.midi.durationMs);
+  const span = Math.min(fullDuration, Math.max(1, state.view.endMs - state.view.startMs));
+  const start = Math.max(0, Math.min(fullDuration - span, state.view.startMs + deltaMs));
+  state.view.startMs = start;
+  state.view.endMs = start + span;
+  if (refresh) {
+    refreshRoll();
+    scheduleSessionSave();
+  }
+}
+
+function movePitchWindow(deltaPitch, refresh = true) {
+  const fullMinimum = state.sourcePitchRange.min;
+  const fullMaximum = state.sourcePitchRange.max;
+  const span = Math.min(fullMaximum - fullMinimum + 1, Math.max(1, state.view.maxPitch - state.view.minPitch + 1));
+  let minimum = Math.round(state.view.minPitch + deltaPitch);
+  minimum = Math.max(fullMinimum, Math.min(fullMaximum - span + 1, minimum));
+  state.view.minPitch = minimum;
+  state.view.maxPitch = minimum + span - 1;
+  if (refresh) {
+    refreshRoll();
+    scheduleSessionSave();
+  }
+}
+
+function centerPitchView(centerPitch) {
+  const span = Math.max(1, state.view.maxPitch - state.view.minPitch + 1);
+  const fullMinimum = state.sourcePitchRange.min;
+  const fullMaximum = state.sourcePitchRange.max;
+  let minimum = Math.round(centerPitch - span / 2);
+  minimum = Math.max(fullMinimum, Math.min(fullMaximum - span + 1, minimum));
+  state.view.minPitch = minimum;
+  state.view.maxPitch = minimum + span - 1;
+  refreshRoll();
+  scheduleSessionSave();
+}
+
+function setHorizontalScroll(value) {
+  const fullDuration = Math.max(1000, state.midi.durationMs);
+  const span = Math.min(fullDuration, Math.max(1, state.view.endMs - state.view.startMs));
+  const maximumStart = Math.max(0, fullDuration - span);
+  state.view.startMs = (Math.max(0, Math.min(1000, value)) / 1000) * maximumStart;
+  state.view.endMs = state.view.startMs + span;
+  refreshRoll();
+  scheduleSessionSave();
+}
+
+function fitViewWidth() {
+  state.view.startMs = 0;
+  state.view.endMs = Math.max(1000, state.midi.durationMs);
+  state.horizontalZoom = 1;
+  refreshRoll();
+  scheduleSessionSave();
+}
+
+function fitViewHeight() {
+  state.view.minPitch = state.sourcePitchRange.min;
+  state.view.maxPitch = state.sourcePitchRange.max;
+  state.verticalZoom = 1;
+  refreshRoll();
+  scheduleSessionSave();
+}
+
+function toggleSnap() {
+  state.snapToGrid = !state.snapToGrid;
+  const button = document.querySelector("#snap-button");
+  button?.classList.toggle("is-active", state.snapToGrid);
+  button?.setAttribute("aria-pressed", String(state.snapToGrid));
+  refreshRoll();
+  scheduleSessionSave();
+}
+
+function syncRollScrollbars() {
+  const horizontal = document.querySelector("#roll-hscroll");
+  const vertical = document.querySelector("#roll-vscroll");
+  if (horizontal && !horizontal.matches(":active")) horizontal.value = horizontalScrollValue();
+  if (vertical && !vertical.matches(":active")) vertical.value = Math.round((state.view.minPitch + state.view.maxPitch) / 2);
+}
+
+function bindAutomationSplitter() {
+  const splitter = document.querySelector("#automation-splitter");
+  const canvas = document.querySelector("#automation-canvas");
+  splitter.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = state.automationLaneHeight;
+    const move = (moveEvent) => {
+      state.automationLaneHeight = Math.round(Math.max(110, Math.min(320, startHeight + moveEvent.clientY - startY)));
+      canvas.style.height = `${state.automationLaneHeight}px`;
+      state.automationRoll?.draw();
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      scheduleSessionSave();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  });
+}
+
+function bindDawShortcuts() {
+  if (state.keyHandler) document.removeEventListener("keydown", state.keyHandler);
+  state.keyHandler = (event) => {
+    if (!state.midi || isTextEntry(event.target)) return;
+    const key = event.key.toLowerCase();
+    if (event.code === "Space") {
+      event.preventDefault();
+      togglePreview();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      stopPreview();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      seekAndMaybePlay(0, false);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      seekAndMaybePlay(state.midi.durationMs, false);
+    } else if ((event.ctrlKey || event.metaKey) && key === "a") {
+      event.preventDefault();
+      setSelection(new Set(editableNotes().map((note) => note.id)));
+    } else if ((event.key === "Delete" || event.key === "Backspace") && state.selectedIds.size > 0) {
+      event.preventDefault();
+      deleteSelectedNotes();
+    } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) && state.selectedIds.size > 0) {
+      event.preventDefault();
+      const pitch = event.key === "ArrowUp" ? (event.shiftKey ? 12 : 1) : event.key === "ArrowDown" ? (event.shiftKey ? -12 : -1) : 0;
+      const time = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      shiftSelectedNotes(time, pitch);
+    } else if (key === "s" && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      toggleSnap();
+    } else if (key === "w" && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      fitViewWidth();
+    } else if (key === "h" && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      fitViewHeight();
+    } else if (event.key === "+" || event.key === "=") {
+      event.preventDefault();
+      zoomTime(1 / 1.2, previewSourceTime());
+    } else if (event.key === "-") {
+      event.preventDefault();
+      zoomTime(1.2, previewSourceTime());
+    }
+  };
+  document.addEventListener("keydown", state.keyHandler);
+}
+
+function isTextEntry(target) {
+  return target instanceof HTMLElement && (target.matches("input, select, textarea") || target.isContentEditable);
 }
 
 function setEditorMode(mode) {
@@ -801,6 +1061,15 @@ function renderPartTabs() {
   tabs.hidden = state.editorMode !== "part";
   tabs.innerHTML = partEditorTabs();
   bindPartEditorTabs();
+  updateAutomationPartControl();
+}
+
+function updateAutomationPartControl() {
+  const control = document.querySelector("#automation-part");
+  if (!control) return;
+  control.innerHTML = partControlOptions();
+  control.value = state.activePartId || "";
+  updateAutomationTarget();
 }
 
 function selectByInputs(additive) {
@@ -916,6 +1185,17 @@ function applySelectedNoteShift() {
   showEditorNotice(`${formatNumber(state.selectedIds.size)}音を移動しました。`);
 }
 
+function shiftSelectedNotes(gridSteps, pitchSteps) {
+  if (state.selectedIds.size === 0) return;
+  const count = state.selectedIds.size;
+  rebuildMidiNotes((note) => ({
+    ...note,
+    startMs: Math.max(0, note.startMs + gridSteps * gridStepMsAt(note.startMs)),
+    midi: Math.max(0, Math.min(127, note.midi + pitchSteps)),
+  }));
+  showEditorNotice(`${formatNumber(count)}音を${gridSteps ? `${signed(gridSteps)}マス` : ""}${gridSteps && pitchSteps ? "・" : ""}${pitchSteps ? `${signed(pitchSteps)}半音` : ""}移動しました。`);
+}
+
 function applySingleNoteEdit() {
   if (state.selectedIds.size !== 1) return;
   const timeMs = clampNumber(document.querySelector("#single-note-time").value, 0, Number.MAX_SAFE_INTEGER, 0);
@@ -927,7 +1207,6 @@ function applySingleNoteEdit() {
 function deleteSelectedNotes() {
   const count = state.selectedIds.size;
   if (count === 0) return;
-  if (!window.confirm(`${formatNumber(count)}音を編集データから削除しますか？`)) return;
   rebuildMidiNotes(() => null);
   showEditorNotice(`${formatNumber(count)}音を削除しました。`);
 }
@@ -1052,7 +1331,7 @@ function scheduleRecalculation() {
 }
 
 function recalculate(updateDom = true) {
-  state.conversion = convertMidi(state.midi, state.parts, state.assignments, state.settings);
+  state.conversion = convertMidi(state.midi, state.parts, state.assignments, state.settings, state.automation);
   if (updateDom) renderConversion();
 }
 
@@ -1087,17 +1366,37 @@ function renderConversion() {
   seek.value = state.previewPositionMs;
   document.querySelector("#preview-progress").value = metrics.durationMs > 0 ? (state.previewPositionMs / metrics.durationMs) * 100 : 0;
   document.querySelector("#preview-time").textContent = `${formatTime(state.previewPositionMs)} / ${formatTime(metrics.durationMs)}`;
+  state.roll?.setPlayhead(previewSourceTime());
+  updateArrangeTransport();
 }
 
 async function togglePreview() {
   if (preview.playing) {
     preview.stop();
     updatePreviewButton(false);
+    updateArrangeTransport();
     return;
   }
   if (state.previewPositionMs >= state.conversion.metrics.durationMs) setPreviewPosition(0);
   await preview.play(state.conversion.notes, state.previewPositionMs);
   updatePreviewButton(true);
+  updateArrangeTransport();
+}
+
+function stopPreview() {
+  preview.stop();
+  updatePreviewButton(false);
+  updateArrangeTransport();
+}
+
+async function seekAndMaybePlay(sourceTimeMs, shouldPlay = false) {
+  const offset = state.conversion?.metrics.offsetMs || 0;
+  setPreviewPosition(Math.max(0, Number(sourceTimeMs) - offset));
+  if (shouldPlay || preview.playing) {
+    await preview.play(state.conversion.notes, state.previewPositionMs);
+    updatePreviewButton(true);
+    updateArrangeTransport();
+  }
 }
 
 function setPreviewPosition(timeMs) {
@@ -1109,13 +1408,42 @@ function setPreviewPosition(timeMs) {
   if (seek) seek.value = state.previewPositionMs;
   if (progress) progress.value = duration > 0 ? (state.previewPositionMs / duration) * 100 : 0;
   if (time) time.textContent = `${formatTime(state.previewPositionMs)} / ${formatTime(duration)}`;
-  state.roll?.setPlayhead(state.previewPositionMs);
+  state.roll?.setPlayhead(previewSourceTime());
+  updateArrangeTransport();
   scheduleSessionSave();
 }
 
 function updatePreviewButton(playing) {
   const button = document.querySelector("#preview-button");
   if (button) button.textContent = playing ? "■ 試聴を停止" : "▶ 変換後を試聴";
+}
+
+function updateArrangeTransport() {
+  const button = document.querySelector("#transport-play");
+  const time = document.querySelector("#transport-time");
+  if (button) {
+    button.textContent = preview.playing ? "❚❚" : "▶";
+    button.classList.toggle("is-playing", preview.playing);
+    button.setAttribute("aria-label", preview.playing ? "一時停止" : "再生");
+  }
+  if (time) time.textContent = formatTimeDetailed(previewSourceTime());
+}
+
+function previewSourceTime() {
+  return Math.max(0, state.previewPositionMs + (state.conversion?.metrics.offsetMs || 0));
+}
+
+async function previewPianoKey(midiPitch) {
+  let pitch = Math.round(midiPitch) - 54;
+  while (pitch < 0) pitch += 12;
+  while (pitch > 24) pitch -= 12;
+  await keyboardPreview.play([{
+    timeMs: 0,
+    instrumentKey: activePart()?.instrumentKey || "piano",
+    pitch,
+    volume: 74,
+    pan: 0,
+  }]);
 }
 
 function downloadPackage() {
@@ -1136,6 +1464,33 @@ function instrumentOptions(selected) {
       ${escapeHtml(instrument.label)} · ${escapeHtml(instrument.block)}
     </option>
   `).join("");
+}
+
+function activePart() {
+  return state.parts.find((part) => part.id === state.activePartId) || state.parts[0] || null;
+}
+
+function partControlOptions() {
+  return state.parts.map((part) => `<option value="${escapeAttribute(part.id)}" ${part.id === state.activePartId ? "selected" : ""}>${escapeHtml(part.name)}</option>`).join("");
+}
+
+function automationLaneTabs() {
+  return Object.entries(AUTOMATION_LANES).map(([key, lane]) => `
+    <button type="button" role="tab" data-automation-lane="${key}" class="automation-tab ${state.automationLane === key ? "is-active" : ""}" aria-selected="${state.automationLane === key}">${lane.label}</button>
+  `).join("");
+}
+
+function updateAutomationTarget() {
+  const target = document.querySelector("#automation-target");
+  if (target) target.textContent = `${activePart()?.name || "パートなし"}へ適用 · Ctrl＋クリックで制御点追加 · 右クリックで削除`;
+}
+
+function horizontalScrollValue() {
+  if (!state.midi) return 0;
+  const fullDuration = Math.max(1000, state.midi.durationMs);
+  const span = Math.min(fullDuration, Math.max(1, state.view.endMs - state.view.startMs));
+  const maximumStart = Math.max(0, fullDuration - span);
+  return maximumStart > 0 ? Math.round((state.view.startMs / maximumStart) * 1000) : 0;
 }
 
 function partEditorTabs() {
@@ -1175,6 +1530,14 @@ function formatTime(ms) {
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = String(total % 60).padStart(2, "0");
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}` : `${minutes}:${seconds}`;
+}
+
+function formatTimeDetailed(ms) {
+  const totalMs = Math.max(0, Math.round(Number(ms) || 0));
+  const minutes = Math.floor(totalMs / 60_000);
+  const seconds = Math.floor((totalMs % 60_000) / 1000);
+  const milliseconds = totalMs % 1000;
+  return `${String(minutes).padStart(3, "0")}:${String(seconds).padStart(2, "0")}:${String(milliseconds).padStart(3, "0")}`;
 }
 
 function clampNumber(value, min, max, fallback) {

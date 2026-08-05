@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  automationValue,
   convertMidi,
   createInitialParts,
   moveSelectionToPart,
@@ -38,6 +39,25 @@ test("1音だけを新しいパートへ分け、既存パートへ戻せる", (
   assert.equal(split.assignments[1], split.createdPart.id);
   const moved = moveSelectionToPart(split.assignments, selected, initial.parts[0].id);
   assert.equal(moved[1], initial.parts[0].id);
+});
+
+test("コントロールレーンを線形補間して音量とPanへ反映する", () => {
+  const source = { notes: [note(0, 60, 500)] };
+  const initial = createInitialParts(source);
+  const partId = initial.parts[0].id;
+  const automation = {
+    [partId]: {
+      volume: [{ timeMs: 0, value: 0 }, { timeMs: 1000, value: 127 }],
+      pan: [{ timeMs: 0, value: 0 }, { timeMs: 1000, value: 127 }],
+    },
+  };
+  const result = convertMidi(source, initial.parts, initial.assignments, {
+    removeLeadingSilence: false,
+    preservePan: true,
+  }, automation);
+  assert.equal(automationValue(automation[partId].volume, 500, 127), 64);
+  assert.equal(result.notes[0].volume, 40);
+  assert.equal(result.notes[0].pan, 0);
 });
 
 function note(id, midiNumber, startMs) {
