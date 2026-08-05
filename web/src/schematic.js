@@ -2,6 +2,8 @@ const SCHEMATIC_VERSION = 3;
 const MINECRAFT_DATA_VERSION = 4671; // Minecraft Java 1.21.11
 const MAX_DIMENSION = 0xffff;
 const MAX_NBT_ARRAY_LENGTH = 0x7fffffff;
+const SIGN_BLOCK_STATE = "minecraft:oak_hanging_sign[attached=false,rotation=8,waterlogged=false]";
+const SIGN_SUPPORT_BLOCK_STATE = "minecraft:oak_planks";
 
 const NBT = Object.freeze({
   END: 0,
@@ -60,6 +62,7 @@ export function planGridSchematic(notes, requestedBpm = 120) {
       y: 0,
       z,
       signY: 1,
+      supportY: 2,
       signLines: [
         String(Math.max(0, Math.min(100, Math.round(Number(note.volume) || 0)))),
         String(Math.max(-100, Math.min(100, Math.round(Number(note.pan) || 0)))),
@@ -70,7 +73,7 @@ export function planGridSchematic(notes, requestedBpm = 120) {
     };
   });
   const width = maximumX + 1;
-  const height = 2;
+  const height = 3;
   let length = 1;
   for (const laneCount of laneAtX.values()) length = Math.max(length, laneCount);
   if (width > MAX_DIMENSION || height > MAX_DIMENSION || length > MAX_DIMENSION) {
@@ -89,8 +92,8 @@ export function planGridSchematic(notes, requestedBpm = 120) {
     length,
     cellCount,
     noteCount: placements.length,
-    blockCount: placements.length * 2,
-    estimatedBytes: cellCount + placements.length * 260,
+    blockCount: placements.length * 3,
+    estimatedBytes: cellCount + placements.length * 230,
     maxTimingErrorMs: placements.reduce((maximum, placement) => Math.max(maximum, placement.timingErrorMs), 0),
     placements,
   };
@@ -99,7 +102,11 @@ export function planGridSchematic(notes, requestedBpm = 120) {
 /** Sponge schematic v3の非圧縮NBTを作る。テストとgzip前処理で共用する。 */
 export function buildSpongeSchematicNbt({ notes, bpm, title = "OMMT Grid", createdAt = Date.now() }) {
   const plan = planGridSchematic(notes, bpm);
-  const palette = new Map([["minecraft:air", 0], ["minecraft:oak_sign[rotation=8,waterlogged=false]", 1]]);
+  const palette = new Map([
+    ["minecraft:air", 0],
+    [SIGN_BLOCK_STATE, 1],
+    [SIGN_SUPPORT_BLOCK_STATE, 2],
+  ]);
   for (const placement of plan.placements) {
     const state = noteBlockState(placement.note);
     if (!palette.has(state)) palette.set(state, palette.size);
@@ -110,8 +117,10 @@ export function buildSpongeSchematicNbt({ notes, bpm, title = "OMMT Grid", creat
   for (const placement of plan.placements) {
     const noteIndex = blockIndex(placement.x, placement.y, placement.z, plan.width, plan.length);
     const signIndex = blockIndex(placement.x, placement.signY, placement.z, plan.width, plan.length);
+    const supportIndex = blockIndex(placement.x, placement.supportY, placement.z, plan.width, plan.length);
     blocks.set(noteIndex, palette.get(noteBlockState(placement.note)));
-    blocks.set(signIndex, palette.get("minecraft:oak_sign[rotation=8,waterlogged=false]"));
+    blocks.set(signIndex, palette.get(SIGN_BLOCK_STATE));
+    blocks.set(supportIndex, palette.get(SIGN_SUPPORT_BLOCK_STATE));
     blockEntities.push(signBlockEntity(placement));
   }
 
@@ -179,15 +188,11 @@ function signBlockEntity(placement) {
   const emptyMessages = ["", "", "", ""].map((line) => JSON.stringify({ text: line }));
   return [
     ["Pos", NBT.INT_ARRAY, [placement.x, placement.signY, placement.z]],
-    ["Id", NBT.STRING, "minecraft:sign"],
+    ["Id", NBT.STRING, "minecraft:hanging_sign"],
     ["Data", NBT.COMPOUND, [
       ["front_text", NBT.COMPOUND, signText(messages)],
       ["back_text", NBT.COMPOUND, signText(emptyMessages)],
       ["is_waxed", NBT.BYTE, 0],
-      ["Text1", NBT.STRING, messages[0]],
-      ["Text2", NBT.STRING, messages[1]],
-      ["Text3", NBT.STRING, messages[2]],
-      ["Text4", NBT.STRING, messages[3]],
     ]],
   ];
 }

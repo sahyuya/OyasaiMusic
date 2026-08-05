@@ -18,9 +18,10 @@ test("グリッド列・和音レーン・看板タイミング分数を計画�
   const plan = planGridSchematic(notes, 120);
   assert.equal(plan.bpm, 120);
   assert.equal(plan.width, 2);
-  assert.equal(plan.height, 2);
+  assert.equal(plan.height, 3);
   assert.equal(plan.length, 3);
   assert.equal(plan.noteCount, 4);
+  assert.equal(plan.blockCount, 12);
   assert.equal(plan.placements[0].signLines[0], "80");
   assert.equal(plan.placements[0].signLines[1], "-50");
   assert.equal(plan.placements[0].signLines[2], "");
@@ -39,14 +40,20 @@ test("Sponge schematic v3のパレット・BlockData・看板NBTを作る", () =
   assert.equal(root.Version, 3);
   assert.equal(root.DataVersion, 4671);
   assert.equal(root.Width, plan.width);
-  assert.equal(root.Height, 2);
+  assert.equal(root.Height, 3);
   assert.equal(root.Length, plan.length);
   assert.equal(root.Metadata.OMMT.GridBPM, 120);
   assert.equal(root.Blocks.Data.length, plan.cellCount);
   assert.equal(root.Blocks.BlockEntities.length, notes.length);
-  assert.equal(root.Blocks.BlockEntities[0].Id, "minecraft:sign");
+  assert.equal(root.Blocks.BlockEntities[0].Id, "minecraft:hanging_sign");
   assert.equal(JSON.parse(root.Blocks.BlockEntities[0].Data.front_text.messages[0]).text, "80");
   assert.equal(JSON.parse(root.Blocks.BlockEntities[0].Data.front_text.messages[1]).text, "-50");
+  assert.equal(root.Blocks.BlockEntities[0].Data.Text1, undefined);
+  const hangingSignState = [...palette.keys()].find((key) => key.startsWith("minecraft:oak_hanging_sign["));
+  assert.ok(hangingSignState);
+  assert.ok(palette.has("minecraft:oak_planks"));
+  assert.equal(root.Blocks.Data[plan.width * plan.length], palette.get(hangingSignState));
+  assert.equal(root.Blocks.Data[2 * plan.width * plan.length], palette.get("minecraft:oak_planks"));
   assert.ok([...palette.keys()].some((key) => key.includes("minecraft:note_block[instrument=bell,note=18")));
 });
 

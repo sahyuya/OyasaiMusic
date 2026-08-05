@@ -634,7 +634,8 @@ function renderEditor() {
           <span class="schematic-badge">/rec we grid 対応</span>
         </div>
         <p class="schematic-intro">
-          各音を音ブロックとして配置し、その1ブロック上の看板へ音量・Pan・細かなタイミング差を書き込みます。
+          各音を音ブロックとして配置し、その1ブロック上の吊り下げ看板へ音量・Pan・細かなタイミング差を書き込みます。
+          通常看板でJSONが表示されるFAWE環境を避けるため、看板の上には支持用のオーク板材も配置します。
           サーバーへ置かず、FAWEのクリップボードから直接録音できます。
         </p>
         <div class="schematic-controls">
