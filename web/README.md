@@ -30,6 +30,8 @@ MIDIファイルをブラウザ内で解析し、OyasaiMusic専用の`.oyasai`�
 - IndexedDBへの端末内自動保存と、再訪時の編集状態復元
 - 変換後の簡易試聴
 - OyasaiMusic専用`.oyasai`ファイルの生成
+- FAWEで読み込めるgzip圧縮Sponge Schematic v3（`.schem`）の生成
+- `.schem`内の看板へ音量、Pan、発音タイミング差を自動記録
 
 ## ピアノロールの基本操作
 
@@ -62,6 +64,8 @@ GitHub Pagesへ公開するファイルは`dist`へ生成されます。リポ�
 
 ## Minecraftへの取り込み
 
+### `.oyasai`から直接登録する
+
 1. OMMTで`.oyasai`をダウンロードします。
 2. ファイルを`plugins/OyasaiMusic/import`へ入れます。
 3. `oyasaimusic.use`と`oyasaimusic.import`権限を持つプレイヤーが`/mm import <ファイル名.oyasai>`を実行します。
@@ -69,6 +73,18 @@ GitHub Pagesへ公開するファイルは`dist`へ生成されます。リポ�
 5. 曲名、参考URL、レコード、価格、公開状態はOyasaiMusicの設定画面で変更します。
 
 インポート済みのファイルは、通常`plugins/OyasaiMusic/import/processed`へ移動します。
+
+### FAWE `.schem`をグリッド録音する
+
+1. OMMTの「FAWE · SPONGE V3」でグリッドBPMを指定し、`.schem`をダウンロードします。
+2. `.schem`をサーバーで設定されたFAWEのschematicフォルダーへ入れます。
+3. Minecraft内で`//schem load <ファイル名>`を実行します。ワールドへ貼り付ける必要はありません。
+4. プレイヤーを東向きにします。
+5. OMMTに表示された実BPMで`/rec we grid <BPM>`を実行します。
+
+グリッドは東（X正方向）が時間軸です。同じ時刻の和音はZ方向へ並びます。各ノートブロックの1ブロック上には看板があり、1行目に音量`0`〜`100`、2行目にPan`-100`〜`100`、3行目にグリッド列からの細かな時刻差を四分音符比（例: `1/8`、`-1/16`）で保存します。4行目は任意のカスタム音源ID用で、OMMT出力では空欄です。
+
+Sponge Schematicの1辺は最大65,535ブロックです。指定BPMのまま曲の時間軸が上限を超える場合、OMMTはBPMを安全な値まで下げ、ダウンロード前後に`/rec we grid`へ渡す実BPMを表示します。
 
 OMMTサイト側には曲長・ファイルサイズ・ノート数の固定上限を設けていません。現在のOyasaiMusic音源リーダーには技術上の上限として1,000,000ノートがあるため、それを超える`.oyasai`はサーバーへの保存前に理由付きで拒否されます。
 

@@ -1503,6 +1503,151 @@ button:disabled {
   font-size: 1.4rem;
 }
 
+.schematic-card {
+  margin-top: 1rem;
+  border: 1px solid #405032;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgb(185 231 105 / 7%), transparent 42%),
+    #151911;
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.schematic-heading,
+.schematic-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.schematic-heading h3 {
+  margin: 0.35rem 0 0;
+  font-size: 1.1rem;
+}
+
+.schematic-badge {
+  border: 1px solid #607944;
+  border-radius: 999px;
+  background: #202a17;
+  color: var(--leaf-strong);
+  padding: 0.45rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.schematic-intro {
+  max-width: 70rem;
+  margin: 0.9rem 0 1.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.75;
+}
+
+.schematic-controls {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 0;
+}
+
+.schematic-bpm-field {
+  min-width: min(100%, 24rem);
+  border-top: 0;
+}
+
+.schematic-download-button {
+  display: flex;
+  min-width: min(100%, 23rem);
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  border-color: #718f4e;
+  background: var(--leaf);
+  color: #12170d;
+  padding: 0.75rem 1rem;
+  font-weight: 800;
+}
+
+.schematic-download-button:hover:not(:disabled) {
+  background: var(--leaf-strong);
+}
+
+.schematic-download-button span {
+  font-size: 1.25rem;
+}
+
+.schematic-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.schematic-summary div {
+  padding: 0.85rem;
+}
+
+.schematic-summary div + div {
+  border-left: 1px solid var(--line);
+}
+
+.schematic-summary span,
+.schematic-summary strong {
+  display: block;
+}
+
+.schematic-summary span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.schematic-summary strong {
+  margin-top: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+}
+
+.sign-format {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.sign-format span {
+  border-radius: 8px;
+  background: #0e120b;
+  color: var(--muted);
+  padding: 0.55rem 0.65rem;
+  font-size: 0.64rem;
+}
+
+.sign-format b {
+  display: block;
+  margin-bottom: 0.15rem;
+  color: #cbd1c0;
+}
+
+.schematic-status {
+  min-height: 1.5rem;
+  margin: 0.8rem 0 0;
+  color: #b7bdad;
+  font-size: 0.72rem;
+  line-height: 1.7;
+}
+
+.schematic-status code {
+  border: 1px solid #445435;
+  border-radius: 5px;
+  background: #0a0d08;
+  color: var(--leaf-strong);
+  padding: 0.12rem 0.35rem;
+  font-family: var(--font-mono);
+}
+
 .minecraft-steps {
   margin-top: 1rem;
   border: 1px solid var(--line);
@@ -1522,6 +1667,26 @@ button:disabled {
   color: var(--muted);
   padding: 1.2rem 1.2rem 1.2rem 3rem;
   line-height: 1.8;
+}
+
+.minecraft-methods {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--line);
+}
+
+.minecraft-methods > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.minecraft-methods h4 {
+  margin: 1rem 1.2rem 0;
+  color: #d6dacd;
+  font-size: 0.76rem;
+}
+
+.minecraft-methods ol {
+  border-top: 0;
 }
 
 .minecraft-steps code {
@@ -1576,6 +1741,48 @@ footer {
 }
 
 @media (max-width: 700px) {
+  .schematic-heading,
+  .schematic-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .schematic-badge {
+    align-self: flex-start;
+  }
+
+  .schematic-download-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .schematic-summary,
+  .sign-format,
+  .minecraft-methods {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .schematic-summary div + div {
+    border-left: 0;
+  }
+
+  .schematic-summary div:nth-child(even) {
+    border-left: 1px solid var(--line);
+  }
+
+  .schematic-summary div:nth-child(n+3) {
+    border-top: 1px solid var(--line);
+  }
+
+  .minecraft-methods > div + div {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .minecraft-methods {
+    grid-template-columns: 1fr;
+  }
+
   .site-header {
     align-items: flex-start;
   }

@@ -12,6 +12,7 @@ import { NOTE_BLOCK_INSTRUMENTS, midiNoteName } from "./instruments.js";
 import { buildRulerGrid, buildTimeGrid, nearestGridTime } from "./grid.js";
 import { mergeMidiDocuments } from "./midi-merge.js";
 import { encodeOyasaiPackage, downloadBlob } from "./oyasai-format.js";
+import { encodeSpongeSchematic, planGridSchematic } from "./schematic.js";
 import { PianoRoll } from "./piano-roll.js";
 import { AUTOMATION_LANES, AutomationLane } from "./automation-lane.js";
 import { clearLatestSession, loadLatestSession, saveLatestSession } from "./session-store.js";
@@ -30,6 +31,7 @@ const state = {
   automation: {},
   automationLane: "velocity",
   automationLaneHeight: 170,
+  schematicBpm: 120,
   view: { startMs: 0, endMs: 1000, minPitch: 36, maxPitch: 84 },
   sourcePitchRange: { min: 36, max: 84 },
   editorMode: "all",
@@ -322,6 +324,7 @@ function restoreSession(snapshot, notify = true) {
   state.automation = snapshot.automation && typeof snapshot.automation === "object" ? snapshot.automation : {};
   state.automationLane = AUTOMATION_LANES[snapshot.automationLane] ? snapshot.automationLane : "velocity";
   state.automationLaneHeight = clampNumber(snapshot.automationLaneHeight, 110, 320, 170);
+  state.schematicBpm = clampNumber(snapshot.schematicBpm, 1, 999, Math.round(state.midi.tempos?.[0]?.bpm || 120));
   state.sessionSavingEnabled = true;
   state.suspendedSession = null;
   updateSourcePitchRange();
@@ -351,6 +354,7 @@ function createSessionSnapshot() {
     automation: state.automation,
     automationLane: state.automationLane,
     automationLaneHeight: state.automationLaneHeight,
+    schematicBpm: state.schematicBpm,
   };
 }
 
@@ -405,6 +409,7 @@ function initializeEditor(midi) {
   state.automation = {};
   state.automationLane = "velocity";
   state.automationLaneHeight = 170;
+  state.schematicBpm = clampNumber(Math.round(midi.tempos?.[0]?.bpm || 120), 1, 999, 120);
   state.sessionSavingEnabled = true;
   let minPitch = 127;
   let maxPitch = 0;
@@ -623,13 +628,40 @@ function renderEditor() {
         </section>
       </div>
 
+      <section class="schematic-card" aria-labelledby="schematic-title">
+        <div class="schematic-heading">
+          <div><span class="step-label">FAWE · SPONGE V3</span><h3 id="schematic-title">音ブロックグリッドを.schemで書き出す</h3></div>
+          <span class="schematic-badge">/rec we grid 対応</span>
+        </div>
+        <p class="schematic-intro">
+          各音を音ブロックとして配置し、その1ブロック上の看板へ音量・Pan・細かなタイミング差を書き込みます。
+          サーバーへ置かず、FAWEのクリップボードから直接録音できます。
+        </p>
+        <div class="schematic-controls">
+          <label class="field-row schematic-bpm-field"><span>グリッドBPM</span><span class="inline-field"><input id="schematic-bpm" type="number" min="1" max="999" step="1" value="${state.schematicBpm}" /> BPM</span></label>
+          <button type="button" id="schematic-download" class="schematic-download-button">FAWE .schem をダウンロード <span>↓</span></button>
+        </div>
+        <div id="schematic-summary" class="schematic-summary" aria-live="polite"></div>
+        <div class="sign-format" aria-label="看板フォーマット">
+          <span><b>1行目</b> 音量 0〜100</span><span><b>2行目</b> Pan −100〜100</span><span><b>3行目</b> 四分音符に対する時刻差</span><span><b>4行目</b> カスタム音源ID（任意）</span>
+        </div>
+        <p id="schematic-status" class="schematic-status">書き出し準備ができています。</p>
+      </section>
+
       <details class="minecraft-steps">
         <summary>Minecraftへ取り込む手順</summary>
-        <ol>
-          <li>ダウンロードしたファイルをサーバーの<code>plugins/OyasaiMusic/import</code>へ入れます。</li>
-          <li>Minecraft内で<code>/mm import &lt;ファイル名&gt;</code>を実行します。</li>
-          <li>曲は非公開の下書きとして登録されます。曲名、参考URL、公開状態をゲーム内で設定します。</li>
-        </ol>
+        <div class="minecraft-methods">
+          <div><h4>.oyasaiから登録</h4><ol>
+            <li>ファイルを<code>plugins/OyasaiMusic/import</code>へ入れます。</li>
+            <li><code>/mm import &lt;ファイル名&gt;</code>を実行します。</li>
+            <li>曲名、参考URL、公開状態をゲーム内で設定します。</li>
+          </ol></div>
+          <div><h4>FAWE .schemから録音</h4><ol>
+            <li>ファイルをサーバーで設定されたFAWEのschematicフォルダーへ入れます。</li>
+            <li><code>//schem load &lt;ファイル名&gt;</code>でクリップボードへ読み込みます。</li>
+            <li>プレイヤーを東向きにして、下に表示された実BPMで<code>/rec we grid &lt;BPM&gt;</code>を実行します。</li>
+          </ol></div>
+        </div>
       </details>
     </section>
   `;
@@ -737,6 +769,16 @@ function bindEditorEvents(recommendedTranspose) {
     if (preview.playing) await preview.play(state.conversion.notes, state.previewPositionMs);
   });
   document.querySelector("#download-button").addEventListener("click", downloadPackage);
+  const schematicBpm = document.querySelector("#schematic-bpm");
+  schematicBpm.addEventListener("input", (event) => {
+    state.schematicBpm = clampNumber(Math.round(Number(event.target.value)), 1, 999, 120);
+    renderSchematicSummary();
+    scheduleSessionSave();
+  });
+  schematicBpm.addEventListener("change", (event) => {
+    event.target.value = state.schematicBpm;
+  });
+  document.querySelector("#schematic-download").addEventListener("click", downloadSchematic);
 }
 
 function initializeRoll() {
@@ -1360,6 +1402,7 @@ function renderConversion() {
     : "<span class=\"is-good\">変換上の大きな注意点はありません</span>";
   document.querySelector("#download-button").disabled = state.conversion.notes.length === 0;
   document.querySelector("#preview-button").disabled = state.conversion.notes.length === 0;
+  renderSchematicSummary();
   state.previewPositionMs = Math.min(state.previewPositionMs, metrics.durationMs);
   const seek = document.querySelector("#preview-seek");
   seek.max = Math.max(0, metrics.durationMs);
@@ -1458,6 +1501,63 @@ function downloadPackage() {
   downloadBlob(blob, `${baseName}.oyasai`);
 }
 
+function renderSchematicSummary() {
+  const summary = document.querySelector("#schematic-summary");
+  const status = document.querySelector("#schematic-status");
+  const button = document.querySelector("#schematic-download");
+  if (!summary || !status || !button) return;
+  if (!state.conversion?.notes?.length) {
+    summary.innerHTML = "";
+    status.textContent = "書き出せるノートがありません。";
+    button.disabled = true;
+    return;
+  }
+  try {
+    const plan = planGridSchematic(state.conversion.notes, state.schematicBpm);
+    summary.innerHTML = [
+      metric("実BPM", formatNumber(plan.bpm)),
+      metric("寸法", `${formatNumber(plan.width)} × ${formatNumber(plan.height)} × ${formatNumber(plan.length)}`),
+      metric("配置ブロック", formatNumber(plan.blockCount)),
+      metric("生成目安", formatBytes(plan.estimatedBytes)),
+    ].join("");
+    status.innerHTML = plan.bpmAdjusted
+      ? `曲が長いためBPMを <b>${formatNumber(plan.requestedBpm)}</b> から <b>${formatNumber(plan.bpm)}</b> へ自動調整します。東向きで <code>/rec we grid ${plan.bpm}</code> を実行してください。`
+      : `東向きで <code>/rec we grid ${plan.bpm}</code> を実行してください。最大タイミング誤差は ${formatNumber(plan.maxTimingErrorMs)} ms です。`;
+    button.disabled = false;
+  } catch (error) {
+    summary.innerHTML = "";
+    status.textContent = error instanceof Error ? error.message : ".schemを計画できませんでした。";
+    button.disabled = true;
+  }
+}
+
+async function downloadSchematic() {
+  const button = document.querySelector("#schematic-download");
+  const status = document.querySelector("#schematic-status");
+  if (!button || !status || !state.conversion?.notes?.length) return;
+  button.disabled = true;
+  status.textContent = "ブラウザ内でSponge Schematic v3を生成・圧縮しています…";
+  try {
+    const result = await encodeSpongeSchematic({
+      notes: state.conversion.notes,
+      bpm: state.schematicBpm,
+      title: state.title || state.midi.title || "OMMT Grid",
+    });
+    if (result.plan.bpmAdjusted) {
+      state.schematicBpm = result.plan.bpm;
+      document.querySelector("#schematic-bpm").value = result.plan.bpm;
+      scheduleSessionSave();
+    }
+    const baseName = safeFileName((state.title || state.midi.title || "ommt-grid").trim());
+    downloadBlob(result.blob, `${baseName}.schem`);
+    renderSchematicSummary();
+    status.innerHTML = `${formatBytes(result.compressedBytes)} の.schemを書き出しました。東向きで <code>/rec we grid ${result.plan.bpm}</code> を実行してください。`;
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : ".schemの生成に失敗しました。";
+    button.disabled = false;
+  }
+}
+
 function instrumentOptions(selected) {
   return NOTE_BLOCK_INSTRUMENTS.map((instrument) => `
     <option value="${instrument.key}" ${instrument.key === selected ? "selected" : ""}>
@@ -1522,6 +1622,19 @@ function formatNumber(value) {
 
 function formatDecimal(value) {
   return new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 1 }).format(Number(value) || 0);
+}
+
+function formatBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${formatNumber(bytes)} B`;
+  if (bytes < 1024 ** 2) return `${formatDecimal(bytes / 1024)} KB`;
+  if (bytes < 1024 ** 3) return `${formatDecimal(bytes / (1024 ** 2))} MB`;
+  return `${formatDecimal(bytes / (1024 ** 3))} GB`;
+}
+
+function safeFileName(value) {
+  const safe = String(value || "ommt-grid").replace(/[<>:\"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "");
+  return safe || "ommt-grid";
 }
 
 function formatTime(ms) {

@@ -1,10 +1,16 @@
 package com.github.sahyuya.oyasaiMusic.audio
 
+import com.google.gson.JsonElement
+import com.google.gson.JsonParser
+import com.sk89q.worldedit.extent.clipboard.Clipboard
 import com.sk89q.worldedit.math.BlockVector3
 import kotlin.math.roundToInt
 import org.bukkit.block.Block
 import org.bukkit.block.Sign
 import org.bukkit.block.sign.Side
+import org.enginehub.linbus.tree.LinCompoundTag
+import org.enginehub.linbus.tree.LinListTag
+import org.enginehub.linbus.tree.LinStringTag
 
 /**
  * 録音処理（グリッド型・回路型・動的録音）で共通利用する、 「音ブロックの真上(Y+1)にある看板」から Volume(1行目) / Pan(2行目) / Delay(3行目) / 音源(4行目)
@@ -14,6 +20,14 @@ import org.bukkit.block.sign.Side
  * 4.5.1:2 → entity.axolotl.attack の2番パターンへ音色を上書き 数値として解釈できない・行が空の場合はそのフィールドの上書きを行わない(null)。
  */
 object SignOverrideProcessor {
+
+  /** 看板4行を一度だけ解析した結果。クリップボードと実ワールドの両経路で同じ意味を使う。 */
+  data class Overrides(
+      val volume: Int?,
+      val pan: Int?,
+      val delayMs: Int?,
+      val customSound: VanillaSoundCatalog.SoundSelection?,
+  )
 
   private val DELAY_PATTERN = Regex("^([+-]?)(\\d+)(?:\\s*/\\s*(\\d+))?$")
 
@@ -77,11 +91,88 @@ object SignOverrideProcessor {
   }
 
   /**
+   * FAWEクリップボード内のノートブロック直上(Y+1)にある看板NBTを読み取る。
+   *
+   * Sponge Schematic v3から読み込まれたブロックエンティティと、通常の`//copy`で得た看板の両方を扱う。
+   * FAWEがv3の`Data`を展開する場合と保持する場合があるため、NBT直下と`Data`内のどちらも確認する。
+   * 戻り値がnullなら、呼び出し側は既存互換として実ワールド上の看板を参照できる。
+   */
+  fun extractFromClipboard(
+      clipboard: Clipboard,
+      noteBlockPos: BlockVector3,
+      quarterNoteMs: Double,
+  ): Overrides? {
+    return try {
+      val signBlock = clipboard.getFullBlock(noteBlockPos.add(0, 1, 0))
+      if (!signBlock.blockType.id().endsWith("_sign")) return null
+      val nbt = signBlock.nbtReference?.value ?: return null
+      val lines = extractSignLines(nbt) ?: return null
+      val (volume, pan) = parseLines(lines[0], lines[1])
+      Overrides(
+          volume = volume,
+          pan = pan,
+          delayMs = parseDelayMillis(lines[2], quarterNoteMs),
+          customSound = VanillaSoundCatalog.resolveSignLine(lines[3]),
+      )
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun extractSignLines(root: LinCompoundTag): List<String>? {
+    val data = (root.value()["Data"] as? LinCompoundTag) ?: root
+    val front = data.value()["front_text"] as? LinCompoundTag
+    val messages = front?.value()?.get("messages") as? LinListTag<*>
+    if (messages != null) {
+      val lines =
+          messages.value().take(4).map { tag ->
+            val raw = (tag as? LinStringTag)?.value().orEmpty()
+            plainSignText(raw)
+          }.toMutableList()
+      while (lines.size < 4) lines += ""
+      return lines
+    }
+
+    val legacyKeys = (1..4).map { "Text$it" }
+    if (legacyKeys.none { data.value().containsKey(it) }) return null
+    return legacyKeys.map { key ->
+      val raw = (data.value()[key] as? LinStringTag)?.value().orEmpty()
+      plainSignText(raw)
+    }
+  }
+
+  /** MojangのJSONテキストコンポーネントから、看板に表示される素の文字列を取り出す。 */
+  private fun plainSignText(raw: String): String {
+    if (raw.isBlank()) return ""
+    return try {
+      val parsed = JsonParser.parseString(raw)
+      buildString { appendJsonText(parsed, this) }
+    } catch (_: Exception) {
+      raw
+    }
+  }
+
+  private fun appendJsonText(element: JsonElement?, output: StringBuilder) {
+    if (element == null || element.isJsonNull) return
+    when {
+      element.isJsonPrimitive -> {
+        val primitive = element.asJsonPrimitive
+        if (primitive.isString) output.append(primitive.asString)
+      }
+      element.isJsonArray -> element.asJsonArray.forEach { appendJsonText(it, output) }
+      element.isJsonObject -> {
+        val component = element.asJsonObject
+        appendJsonText(component.get("text"), output)
+        component.get("extra")?.let { appendJsonText(it, output) }
+      }
+    }
+  }
+
+  /**
    * グリッド型・回路型録音用のメイン経路。
    *
-   * FAWEクリップボードは`//copy`した時点のワールド座標をそのまま保持しているため、 クリップボード内のNBTを直接解析するのではなく、同じ座標にある「実ワールド上に
-   * まだ残っている元のブロック」から看板を読み取る（[extractFromWorld]と同じ信頼できる Bukkit APIを再利用できるため）。前提として、録音コマンドを実行する時点で
-   * コピー元の建築（看板を含む）がワールド上にそのまま残っている必要がある。
+   * [extractFromClipboard]で看板NBTを取得できなかった古いクリップボードや、実ワールドを直接対象とする
+   * 既存ワークフローの互換用フォールバックとして使用する。
    */
   fun extractFromWorldPos(world: org.bukkit.World, noteBlockPos: BlockVector3): Pair<Int?, Int?> {
     return try {

@@ -32,7 +32,7 @@ object GridRecorder {
    * @param clipboard 走査対象のFAWEクリップボード（プレイヤーが事前に //copy 等で確保したもの）
    * @param bpm 基準BPM
    * @param timeAxisFacing 時間軸として使用する水平向き（コマンド実行時のプレイヤーの向きを渡す）
-   * @param world 看板の読み取りに使用するワールド（//copy した際の元の建築がまだ残っている前提）
+   * @param world 看板NBTがクリップボードにない場合だけ参照する、既存互換用のワールド
    */
   fun record(
       clipboard: Clipboard,
@@ -61,13 +61,21 @@ object GridRecorder {
           val timeIndex = axis.indexOf(pos, min, max)
           val baseTimeMs = (timeIndex * stepMs).toInt()
 
-          var volume = 100
-          var pan = 0
-          val (overrideVolume, overridePan) = SignOverrideProcessor.extractFromWorldPos(world, pos)
-          overrideVolume?.let { volume = it }
-          overridePan?.let { pan = it }
-          val delayMs = SignOverrideProcessor.extractDelayFromWorldPos(world, pos, stepMs) ?: 0
-          val customSound = SignOverrideProcessor.extractCustomSoundFromWorldPos(world, pos)
+          val overrides =
+              SignOverrideProcessor.extractFromClipboard(clipboard, pos, stepMs)
+                  ?: run {
+                    val (volume, pan) = SignOverrideProcessor.extractFromWorldPos(world, pos)
+                    SignOverrideProcessor.Overrides(
+                        volume = volume,
+                        pan = pan,
+                        delayMs = SignOverrideProcessor.extractDelayFromWorldPos(world, pos, stepMs),
+                        customSound = SignOverrideProcessor.extractCustomSoundFromWorldPos(world, pos),
+                    )
+                  }
+          val volume = overrides.volume ?: 100
+          val pan = overrides.pan ?: 0
+          val delayMs = overrides.delayMs ?: 0
+          val customSound = overrides.customSound
 
           rawNotes +=
               RawNote(

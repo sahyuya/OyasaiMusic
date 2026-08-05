@@ -97,8 +97,8 @@ class RecordCommand(
     val clipboard = getClipboardOrNotify(player) ?: return
     val facing = GridRecorder.horizontalFacingFromYaw(player.location.yaw)
 
-    // クリップボード走査中に看板(ワールドの実ブロック)も読み取るため、ここはメインスレッドで
-    // 同期実行する（Bukkitのワールド読み取りは非同期スレッドからだと安全性が保証されないため）。
+    // 看板はまずFAWEクリップボード内のNBTから読み取り、NBTがない場合だけ実ワールドを参照する。
+    // 互換用のBukkitワールド読み取りを含むため、ここはメインスレッドで同期実行する。
     // ファイル書き込み・DB登録は finalizeRecording 内で別途非同期化される。
     val notes =
         try {
