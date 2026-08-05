@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#12150f" />
+    <meta
+      name="description"
+      content="MIDIをOyasaiMusic用の音ブロック楽曲へ、ブラウザ内だけで変換します。"
+    />
+    <title>OMMT — OyasaiMusicMidiTranslator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">メインコンテンツへ移動</a>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="OMMT ホーム">
+        <span>
+          <strong>OMMT</strong>
+          <small>OyasaiMusicMidiTranslator</small>
+        </span>
+      </a>
+      <span class="privacy-pill">MIDIは端末の外へ送信されません</span>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="eyebrow">MIDI → OyasaiMusic</div>
+        <h1 id="hero-title">曲の構造をほどいて、<br /><em>音ブロックの響き</em>へ。</h1>
+        <p>
+          MIDIを読み込み、音域やフレーズごとにパートを分け、Minecraftの音ブロック楽器へ変換します。
+          すべての処理はこのブラウザ内で完結します。
+        </p>
+      </section>
+
+      <section id="workspace" class="workspace" aria-live="polite">
+        <div class="loading-card">
+          <div class="loading-note" aria-hidden="true">♫</div>
+          <p>変換ワークスペースを準備しています…</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>OyasaiMusic専用ツール · Minecraft公式製品ではありません · MIDI楽曲の権利とMinecraftの利用条件を確認してご利用ください</p>
+    </footer>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
