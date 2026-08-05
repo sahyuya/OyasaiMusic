@@ -1,4 +1,5 @@
 import { midiNoteName } from "./instruments.js";
+import { isMinecraftBoundaryPitch } from "./grid.js";
 
 export class PianoRoll {
   constructor(canvas, { onSelectionChange, getColor, getSelected }) {
@@ -10,6 +11,9 @@ export class PianoRoll {
     this.notes = [];
     this.visibleNotes = [];
     this.view = { startMs: 0, endMs: 1000, minPitch: 36, maxPitch: 84 };
+    this.gridTimes = [];
+    this.snapToGrid = true;
+    this.playheadMs = 0;
     this.drag = null;
     this.resizeObserver = new ResizeObserver(() => this.draw());
     this.resizeObserver.observe(canvas);
@@ -19,9 +23,16 @@ export class PianoRoll {
     canvas.addEventListener("pointercancel", () => { this.drag = null; this.draw(); });
   }
 
-  setData(notes, view) {
+  setData(notes, view, { gridTimes = [], snapToGrid = true } = {}) {
     this.notes = notes;
     this.view = { ...this.view, ...view };
+    this.gridTimes = gridTimes;
+    this.snapToGrid = snapToGrid;
+    this.draw();
+  }
+
+  setPlayhead(timeMs) {
+    this.playheadMs = Math.max(0, Number(timeMs) || 0);
     this.draw();
   }
 
@@ -78,8 +89,19 @@ export class PianoRoll {
       context.fillText("表示を軽量化中 · 時間範囲を狭めると全ノート表示", plot.x + 16, plot.y + 24);
     }
 
+    if (this.playheadMs >= this.view.startMs && this.playheadMs <= this.view.endMs) {
+      const playheadX = plot.x + ((this.playheadMs - this.view.startMs) / duration) * plot.width;
+      context.strokeStyle = "#f6c85f";
+      context.lineWidth = 1.5;
+      context.beginPath();
+      context.moveTo(playheadX, plot.y);
+      context.lineTo(playheadX, plot.y + plot.height);
+      context.stroke();
+    }
+
     if (this.drag) {
-      const area = normalizeRect(this.drag.startX, this.drag.startY, this.drag.currentX, this.drag.currentY);
+      const rawArea = normalizeRect(this.drag.startX, this.drag.startY, this.drag.currentX, this.drag.currentY);
+      const area = rawArea.width < 5 && rawArea.height < 5 ? rawArea : this.snapArea(rawArea);
       context.fillStyle = "rgb(185 231 105 / 14%)";
       context.strokeStyle = "#b9e769";
       context.lineWidth = 1;
@@ -101,21 +123,27 @@ export class PianoRoll {
     const pitchSpan = Math.max(1, this.view.maxPitch - this.view.minPitch + 1);
     context.lineWidth = 1;
     for (let pitch = this.view.minPitch; pitch <= this.view.maxPitch; pitch += 1) {
-      if (pitch % 12 !== 0) continue;
       const y = plot.y + ((this.view.maxPitch - pitch) / pitchSpan) * plot.height;
-      context.strokeStyle = "#252a20";
+      const minecraftBoundary = isMinecraftBoundaryPitch(pitch);
+      context.strokeStyle = minecraftBoundary ? "#46543a" : "#20251d";
+      context.lineWidth = minecraftBoundary ? 1.35 : 1;
       context.beginPath();
       context.moveTo(plot.x, y);
       context.lineTo(plot.x + plot.width, y);
       context.stroke();
-      context.fillStyle = "#858b7d";
-      context.font = "10px ui-monospace, monospace";
-      context.textAlign = "right";
-      context.fillText(midiNoteName(pitch), plot.x - 7, y + 3);
+      if (minecraftBoundary) {
+        context.fillStyle = "#b9c9a6";
+        context.font = "10px ui-monospace, monospace";
+        context.textAlign = "right";
+        context.fillText(midiNoteName(pitch), plot.x - 7, y + 3);
+      }
     }
-    for (let step = 0; step <= 8; step += 1) {
-      const x = plot.x + (step / 8) * plot.width;
-      context.strokeStyle = step % 2 === 0 ? "#2a3024" : "#1e231b";
+    const duration = Math.max(1, this.view.endMs - this.view.startMs);
+    const gridTimes = this.gridTimes.filter((time) => time >= this.view.startMs && time <= this.view.endMs);
+    for (let index = 0; index < gridTimes.length; index += 1) {
+      const x = plot.x + ((gridTimes[index] - this.view.startMs) / duration) * plot.width;
+      context.strokeStyle = index % 4 === 0 ? "#39432f" : "#252b21";
+      context.lineWidth = index % 4 === 0 ? 1.2 : 1;
       context.beginPath();
       context.moveTo(x, plot.y);
       context.lineTo(x, plot.y + plot.height);
@@ -157,8 +185,9 @@ export class PianoRoll {
     const point = this.point(event);
     this.drag.currentX = point.x;
     this.drag.currentY = point.y;
-    const area = normalizeRect(this.drag.startX, this.drag.startY, point.x, point.y);
-    const isClick = area.width < 5 && area.height < 5;
+    const rawArea = normalizeRect(this.drag.startX, this.drag.startY, point.x, point.y);
+    const isClick = rawArea.width < 5 && rawArea.height < 5;
+    const area = isClick ? rawArea : this.snapArea(rawArea);
     let ids;
     if (isClick) {
       const hit = [...this.visibleNotes].reverse().find((region) => contains(region, point));
@@ -197,6 +226,25 @@ export class PianoRoll {
       if (intersects(region, area)) ids.push(note.id);
     }
     return ids;
+  }
+
+  snapArea(area) {
+    if (!this.snapToGrid || !this.plot) return area;
+    const duration = Math.max(1, this.view.endMs - this.view.startMs);
+    const pitchSpan = Math.max(1, this.view.maxPitch - this.view.minPitch + 1);
+    const leftTime = this.view.startMs + clamp01((area.x - this.plot.x) / this.plot.width) * duration;
+    const rightTime = this.view.startMs + clamp01((area.x + area.width - this.plot.x) / this.plot.width) * duration;
+    const snappedStart = gridFloor(leftTime, this.gridTimes);
+    const snappedEnd = gridCeil(rightTime, this.gridTimes);
+    const topPitch = this.view.maxPitch - ((area.y - this.plot.y) / this.plot.height) * pitchSpan;
+    const bottomPitch = this.view.maxPitch - ((area.y + area.height - this.plot.y) / this.plot.height) * pitchSpan;
+    const highPitch = Math.min(this.view.maxPitch, Math.ceil(topPitch));
+    const lowPitch = Math.max(this.view.minPitch - 1, Math.floor(bottomPitch));
+    const x1 = this.plot.x + ((snappedStart - this.view.startMs) / duration) * this.plot.width;
+    const x2 = this.plot.x + ((snappedEnd - this.view.startMs) / duration) * this.plot.width;
+    const y1 = this.plot.y + ((this.view.maxPitch - highPitch) / pitchSpan) * this.plot.height;
+    const y2 = this.plot.y + ((this.view.maxPitch - lowPitch) / pitchSpan) * this.plot.height;
+    return normalizeRect(x1, y1, x2, y2);
   }
 }
 
@@ -239,4 +287,24 @@ function formatTime(ms) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function gridFloor(value, grid) {
+  if (!grid?.length) return value;
+  let candidate = grid[0];
+  for (const point of grid) {
+    if (point > value) break;
+    candidate = point;
+  }
+  return candidate;
+}
+
+function gridCeil(value, grid) {
+  if (!grid?.length) return value;
+  for (const point of grid) if (point >= value) return point;
+  return grid.at(-1);
 }

@@ -13,7 +13,7 @@ export function encodeOyasaiPackage({ midi, conversion, parts, settings, title }
     format: "oyasai-midi-import",
     version: VERSION,
     createdBy: "OyasaiMusicMidiTranslator",
-    createdByVersion: "0.1.0",
+    createdByVersion: "0.2.0",
     song: {
       title: String(title || midi.title || "無題の楽曲").trim().slice(0, 120) || "無題の楽曲",
       displayBpm: Math.max(1, Math.min(999, Math.round(midi.tempos[0]?.bpm || 120))),
@@ -25,6 +25,7 @@ export function encodeOyasaiPackage({ midi, conversion, parts, settings, title }
       midiFormat: midi.format,
       ppq: midi.ppq,
       trackCount: midi.tracks.length,
+      files: midi.sources || [{ fileName: midi.sourceName, title: midi.title }],
     },
     conversion: {
       globalTranspose: settings.globalTranspose,
