@@ -14,53 +14,80 @@ const notes = [
   note(0, "bass_guitar", 4, 90, 0),
 ];
 
-test("グリッド列・和音レーン・看板タイミング分数を計画する", () => {
+test("最小発音間隔に合わせてBPMとグリッド全体を拡大する", () => {
   const plan = planGridSchematic(notes, 120);
-  assert.equal(plan.bpm, 120);
-  assert.equal(plan.width, 2);
-  assert.equal(plan.height, 3);
-  assert.equal(plan.length, 3);
+  assert.equal(plan.baseBpm, 120);
+  assert.equal(plan.targetBpm, 480);
+  assert.equal(plan.bpm, 480);
+  assert.equal(plan.bpmRaised, true);
+  assert.equal(plan.bpmReducedForSize, false);
+  assert.equal(plan.minimumIntervalMs, 125);
+  assert.equal(plan.width, 4);
+  assert.equal(plan.height, 1);
+  assert.equal(plan.length, 2);
   assert.equal(plan.noteCount, 4);
-  assert.equal(plan.blockCount, 12);
-  assert.equal(plan.placements[0].signLines[0], "80");
-  assert.equal(plan.placements[0].signLines[1], "-50");
-  assert.equal(plan.placements[0].signLines[2], "");
-  assert.equal(plan.placements.find((placement) => placement.note.timeMs === 125).signLines[2], "1/4");
-  assert.equal(plan.placements.find((placement) => placement.note.timeMs === 375).signLines[2], "-1/4");
+  assert.equal(plan.blockCount, 4);
+  assert.deepEqual(plan.placements.map(({ x, y, z }) => [x, y, z]), [
+    [0, 0, 0],
+    [1, 0, 0],
+    [3, 0, 0],
+    [0, 0, 1],
+  ]);
+  assert.equal(plan.collapsedOnsetCount, 0);
   assert.equal(plan.maxTimingErrorMs, 0);
 
-  const irregular = planGridSchematic([note(976, "piano", 12, 100, 0)], 123);
-  assert.notEqual(irregular.placements[0].signLines[2], "");
-  assert.equal(irregular.maxTimingErrorMs, 0);
+  const irregular = planGridSchematic([
+    note(0, "piano", 12, 100, 0),
+    note(166, "piano", 12, 100, 0),
+    note(333, "piano", 12, 100, 0),
+  ], 120);
+  assert.equal(irregular.minimumIntervalMs, 166);
+  assert.equal(irregular.bpm, 362);
+  assert.deepEqual(irregular.placements.map(({ x }) => x), [0, 1, 2]);
+  assert.equal(irregular.maxTimingErrorMs, 2);
 });
 
-test("Sponge schematic v3のパレット・BlockData・看板NBTを作る", () => {
-  const { bytes, plan, palette } = buildSpongeSchematicNbt({ notes, bpm: 120, title: "Test Grid" });
+test("長い曲はSchematicの横幅上限に収まるBPMへ調整する", () => {
+  const plan = planGridSchematic([
+    note(0, "piano", 12, 100, 0),
+    note(1, "piano", 12, 100, 0),
+    note(120_000, "piano", 12, 100, 0),
+  ], 120);
+  assert.equal(plan.targetBpm, 60_000);
+  assert.equal(plan.bpmReducedForSize, true);
+  assert.ok(plan.bpm < plan.targetBpm);
+  assert.ok(plan.width <= 0xffff);
+});
+
+test("Sponge schematic v3には音ブロックだけを書き込み看板NBTを含めない", () => {
+  const createdAt = 1_700_000_000_000;
+  const { bytes, plan, palette } = buildSpongeSchematicNbt({ notes, baseBpm: 120, title: "Test Grid", createdAt });
   const root = parseNbt(bytes).value.Schematic;
   assert.equal(root.Version, 3);
   assert.equal(root.DataVersion, 4671);
   assert.equal(root.Width, plan.width);
-  assert.equal(root.Height, 3);
+  assert.equal(root.Height, 1);
   assert.equal(root.Length, plan.length);
-  assert.equal(root.Metadata.OMMT.GridBPM, 120);
+  assert.equal(root.Metadata.OMMT.GridBPM, 480);
+  assert.equal(root.Metadata.OMMT.BaseBPM, 120);
+  assert.equal(root.Metadata.OMMT.MinimumIntervalMs, 125);
+  assert.equal(root.Metadata.OMMT.TimingMode, "minimum-interval-grid");
+  assert.equal(root.Metadata.OMMT.DiscardedControls, "volume,pan");
   assert.equal(root.Blocks.Data.length, plan.cellCount);
-  assert.equal(root.Blocks.BlockEntities.length, notes.length);
-  assert.equal(root.Blocks.BlockEntities[0].Id, "minecraft:hanging_sign");
-  assert.equal(JSON.parse(root.Blocks.BlockEntities[0].Data.front_text.messages[0]).text, "80");
-  assert.equal(JSON.parse(root.Blocks.BlockEntities[0].Data.front_text.messages[1]).text, "-50");
-  assert.equal(root.Blocks.BlockEntities[0].Data.Text1, undefined);
-  const hangingSignState = [...palette.keys()].find((key) => key.startsWith("minecraft:oak_hanging_sign["));
-  assert.ok(hangingSignState);
-  assert.ok(palette.has("minecraft:oak_planks"));
-  assert.equal(root.Blocks.Data[plan.width * plan.length], palette.get(hangingSignState));
-  assert.equal(root.Blocks.Data[2 * plan.width * plan.length], palette.get("minecraft:oak_planks"));
+  assert.equal(root.Blocks.BlockEntities, undefined);
+  assert.ok([...palette.keys()].every((key) => key === "minecraft:air" || key.startsWith("minecraft:note_block[")));
+  assert.ok([...palette.keys()].every((key) => !key.includes("sign")));
   assert.ok([...palette.keys()].some((key) => key.includes("minecraft:note_block[instrument=bell,note=18")));
+
+  const changedControls = notes.map((source) => ({ ...source, volume: source.volume === 100 ? 0 : 100, pan: source.pan === 100 ? -100 : 100 }));
+  const withoutControls = buildSpongeSchematicNbt({ notes: changedControls, baseBpm: 120, title: "Test Grid", createdAt });
+  assert.deepEqual(withoutControls.bytes, bytes);
 });
 
 test(".schemをgzip圧縮して復元できる", async () => {
   const createdAt = 1_700_000_000_000;
-  const raw = buildSpongeSchematicNbt({ notes, bpm: 120, title: "Compressed", createdAt });
-  const encoded = await encodeSpongeSchematic({ notes, bpm: 120, title: "Compressed", createdAt });
+  const raw = buildSpongeSchematicNbt({ notes, baseBpm: 120, title: "Compressed", createdAt });
+  const encoded = await encodeSpongeSchematic({ notes, baseBpm: 120, title: "Compressed", createdAt });
   const compressed = new Uint8Array(await encoded.blob.arrayBuffer());
   assert.deepEqual([...compressed.slice(0, 2)], [0x1f, 0x8b]);
   assert.ok(gunzipSync(compressed).equals(Buffer.from(raw.bytes)));

@@ -4,6 +4,7 @@ import {
   automationValue,
   convertMidi,
   createInitialParts,
+  deleteEmptyParts,
   moveSelectionToPart,
   splitSelectionIntoPart,
 } from "../src/converter.js";
@@ -25,7 +26,7 @@ test("MIDI 54/66を音ブロックpitch 0/12へ変換する", () => {
   assert.equal(result.metrics.folded, 1);
 });
 
-test("1音だけを新しいパートへ分け、既存パートへ戻せる", () => {
+test("選択ノートを新しいパートへ分けた後、既存の別パートへ移動できる", () => {
   const initial = createInitialParts(midi);
   const selected = new Set([1]);
   const split = splitSelectionIntoPart({
@@ -39,6 +40,8 @@ test("1音だけを新しいパートへ分け、既存パートへ戻せる", (
   assert.equal(split.assignments[1], split.createdPart.id);
   const moved = moveSelectionToPart(split.assignments, selected, initial.parts[0].id);
   assert.equal(moved[1], initial.parts[0].id);
+  assert.equal(split.assignments[1], split.createdPart.id);
+  assert.deepEqual(deleteEmptyParts(split.parts, moved), initial.parts);
 });
 
 test("コントロールレーンを線形補間して音量とPanへ反映する", () => {

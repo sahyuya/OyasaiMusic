@@ -2,8 +2,7 @@ const SCHEMATIC_VERSION = 3;
 const MINECRAFT_DATA_VERSION = 4671; // Minecraft Java 1.21.11
 const MAX_DIMENSION = 0xffff;
 const MAX_NBT_ARRAY_LENGTH = 0x7fffffff;
-const SIGN_BLOCK_STATE = "minecraft:oak_hanging_sign[attached=false,rotation=8,waterlogged=false]";
-const SIGN_SUPPORT_BLOCK_STATE = "minecraft:oak_planks";
+const MAX_GRID_BPM = 60_000;
 
 const NBT = Object.freeze({
   END: 0,
@@ -37,43 +36,50 @@ const NOTE_BLOCK_INSTRUMENT = Object.freeze({
   pling: "pling",
 });
 
-/** OyasaiMusicのグリッド録音へ渡すX軸時間配置を計算する。 */
-export function planGridSchematic(notes, requestedBpm = 120) {
+/** 看板を使わず、最小の発音間隔を1列以上へ広げるグリッド配置を計算する。 */
+export function planGridSchematic(notes, baseBpm = 120) {
   if (!Array.isArray(notes) || notes.length === 0) throw new Error("書き出せるノートがありません。");
+  const normalizedBaseBpm = Math.max(1, Math.min(MAX_GRID_BPM, Math.round(Number(baseBpm) || 120)));
+  const onsetTimes = [...new Set(notes.map((note) => normalizedTime(note.timeMs)))].sort((a, b) => a - b);
   let maximumTime = 0;
-  for (const note of notes) maximumTime = Math.max(maximumTime, Number(note.timeMs) || 0);
-  let bpm = Math.max(1, Math.min(999, Math.round(Number(requestedBpm) || 120)));
+  let minimumIntervalMs = null;
+  for (let index = 0; index < onsetTimes.length; index += 1) {
+    maximumTime = Math.max(maximumTime, onsetTimes[index]);
+    if (index > 0) {
+      const interval = onsetTimes[index] - onsetTimes[index - 1];
+      if (interval > 0) minimumIntervalMs = Math.min(minimumIntervalMs ?? interval, interval);
+    }
+  }
+
+  const intervalBpm = minimumIntervalMs == null
+    ? normalizedBaseBpm
+    : Math.min(MAX_GRID_BPM, Math.max(1, Math.ceil(60_000 / minimumIntervalMs)));
+  const targetBpm = Math.max(normalizedBaseBpm, intervalBpm);
+  let bpm = targetBpm;
   if (maximumTime > 0) {
-    bpm = Math.min(bpm, Math.max(1, Math.floor(((MAX_DIMENSION - 1) * 60_000) / maximumTime)));
+    const maximumBpmForWidth = Math.max(1, Math.floor(((MAX_DIMENSION - 0.5) * 60_000) / maximumTime));
+    bpm = Math.min(bpm, maximumBpmForWidth);
     while (Math.round((maximumTime * bpm) / 60_000) >= MAX_DIMENSION && bpm > 1) bpm -= 1;
   }
 
   const laneAtX = new Map();
   let maximumX = 0;
   const placements = notes.map((note) => {
-    const x = Math.max(0, Math.round((Math.max(0, Number(note.timeMs) || 0) * bpm) / 60_000));
+    const sourceTimeMs = normalizedTime(note.timeMs);
+    const x = timeColumn(sourceTimeMs, bpm);
     maximumX = Math.max(maximumX, x);
     const z = laneAtX.get(x) || 0;
     laneAtX.set(x, z + 1);
-    const timing = timingFraction(note.timeMs, x, bpm);
     return {
       note,
       x,
       y: 0,
       z,
-      signY: 1,
-      supportY: 2,
-      signLines: [
-        String(Math.max(0, Math.min(100, Math.round(Number(note.volume) || 0)))),
-        String(Math.max(-100, Math.min(100, Math.round(Number(note.pan) || 0)))),
-        timing.text,
-        "",
-      ],
-      timingErrorMs: timing.errorMs,
+      timingErrorMs: Math.abs(recordedTimeMs(x, bpm) - sourceTimeMs),
     };
   });
   const width = maximumX + 1;
-  const height = 3;
+  const height = 1;
   let length = 1;
   for (const laneCount of laneAtX.values()) length = Math.max(length, laneCount);
   if (width > MAX_DIMENSION || height > MAX_DIMENSION || length > MAX_DIMENSION) {
@@ -83,45 +89,46 @@ export function planGridSchematic(notes, requestedBpm = 120) {
   if (!Number.isSafeInteger(cellCount) || cellCount > MAX_NBT_ARRAY_LENGTH) {
     throw new Error("Sponge schematicのBlockData配列上限を超えています。");
   }
+  const usedOnsetColumns = new Set();
+  let collapsedOnsetCount = 0;
+  for (const onsetTime of onsetTimes) {
+    const column = timeColumn(onsetTime, bpm);
+    if (usedOnsetColumns.has(column)) collapsedOnsetCount += 1;
+    else usedOnsetColumns.add(column);
+  }
   return {
     bpm,
-    requestedBpm: Math.max(1, Math.min(999, Math.round(Number(requestedBpm) || 120))),
-    bpmAdjusted: bpm !== Math.max(1, Math.min(999, Math.round(Number(requestedBpm) || 120))),
+    baseBpm: normalizedBaseBpm,
+    targetBpm,
+    bpmRaised: targetBpm > normalizedBaseBpm,
+    bpmReducedForSize: bpm < targetBpm,
+    minimumIntervalMs,
+    collapsedOnsetCount,
     width,
     height,
     length,
     cellCount,
     noteCount: placements.length,
-    blockCount: placements.length * 3,
-    estimatedBytes: cellCount + placements.length * 230,
+    blockCount: placements.length,
+    estimatedBytes: cellCount + placements.length * 24,
     maxTimingErrorMs: placements.reduce((maximum, placement) => Math.max(maximum, placement.timingErrorMs), 0),
     placements,
   };
 }
 
 /** Sponge schematic v3の非圧縮NBTを作る。テストとgzip前処理で共用する。 */
-export function buildSpongeSchematicNbt({ notes, bpm, title = "OMMT Grid", createdAt = Date.now() }) {
-  const plan = planGridSchematic(notes, bpm);
-  const palette = new Map([
-    ["minecraft:air", 0],
-    [SIGN_BLOCK_STATE, 1],
-    [SIGN_SUPPORT_BLOCK_STATE, 2],
-  ]);
+export function buildSpongeSchematicNbt({ notes, baseBpm, bpm, title = "OMMT Grid", createdAt = Date.now() }) {
+  const plan = planGridSchematic(notes, baseBpm ?? bpm ?? 120);
+  const palette = new Map([["minecraft:air", 0]]);
   for (const placement of plan.placements) {
     const state = noteBlockState(placement.note);
     if (!palette.has(state)) palette.set(state, palette.size);
   }
 
   const blocks = new Map();
-  const blockEntities = [];
   for (const placement of plan.placements) {
     const noteIndex = blockIndex(placement.x, placement.y, placement.z, plan.width, plan.length);
-    const signIndex = blockIndex(placement.x, placement.signY, placement.z, plan.width, plan.length);
-    const supportIndex = blockIndex(placement.x, placement.supportY, placement.z, plan.width, plan.length);
     blocks.set(noteIndex, palette.get(noteBlockState(placement.note)));
-    blocks.set(signIndex, palette.get(SIGN_BLOCK_STATE));
-    blocks.set(supportIndex, palette.get(SIGN_SUPPORT_BLOCK_STATE));
-    blockEntities.push(signBlockEntity(placement));
   }
 
   const blockDataWriter = new ByteWriter(Math.min(Math.max(1024, plan.cellCount), 16 * 1024 * 1024));
@@ -137,10 +144,12 @@ export function buildSpongeSchematicNbt({ notes, bpm, title = "OMMT Grid", creat
       ["RequiredMods", NBT.LIST, { elementType: NBT.STRING, items: [] }],
       ["OMMT", NBT.COMPOUND, [
         ["GridBPM", NBT.INT, plan.bpm],
-        ["RequestedBPM", NBT.INT, plan.requestedBpm],
+        ["BaseBPM", NBT.INT, plan.baseBpm],
+        ["MinimumIntervalMs", NBT.INT, plan.minimumIntervalMs ?? 0],
         ["TimeAxis", NBT.STRING, "EAST_X_POSITIVE"],
         ["NoteCount", NBT.INT, plan.noteCount],
-        ["SignFormat", NBT.STRING, "volume|pan|quarter-delay|custom-sound"],
+        ["TimingMode", NBT.STRING, "minimum-interval-grid"],
+        ["DiscardedControls", NBT.STRING, "volume,pan"],
       ]],
     ]],
     ["Width", NBT.SHORT, plan.width],
@@ -150,7 +159,6 @@ export function buildSpongeSchematicNbt({ notes, bpm, title = "OMMT Grid", creat
     ["Blocks", NBT.COMPOUND, [
       ["Palette", NBT.COMPOUND, paletteEntries],
       ["Data", NBT.BYTE_ARRAY, blockDataWriter.toUint8Array()],
-      ["BlockEntities", NBT.LIST, { elementType: NBT.COMPOUND, items: blockEntities }],
     ]],
   ];
 
@@ -183,76 +191,17 @@ function noteBlockState(note) {
   return `minecraft:note_block[instrument=${instrument},note=${pitch},powered=false]`;
 }
 
-function signBlockEntity(placement) {
-  const messages = placement.signLines.map((line) => JSON.stringify({ text: line }));
-  const emptyMessages = ["", "", "", ""].map((line) => JSON.stringify({ text: line }));
-  return [
-    ["Pos", NBT.INT_ARRAY, [placement.x, placement.signY, placement.z]],
-    ["Id", NBT.STRING, "minecraft:hanging_sign"],
-    ["Data", NBT.COMPOUND, [
-      ["front_text", NBT.COMPOUND, signText(messages)],
-      ["back_text", NBT.COMPOUND, signText(emptyMessages)],
-      ["is_waxed", NBT.BYTE, 0],
-    ]],
-  ];
+function normalizedTime(value) {
+  return Math.max(0, Math.round(Number(value) || 0));
 }
 
-function signText(messages) {
-  return [
-    ["has_glowing_text", NBT.BYTE, 0],
-    ["color", NBT.STRING, "black"],
-    ["messages", NBT.LIST, { elementType: NBT.STRING, items: messages }],
-  ];
+function timeColumn(timeMs, bpm) {
+  return Math.max(0, Math.round((timeMs * bpm) / 60_000));
 }
 
-function timingFraction(timeMs, x, bpm) {
-  const target = Math.max(0, Math.round(Number(timeMs) || 0));
-  const quarterNoteMs = 60_000 / bpm;
-  // GridRecorderは基準列時刻をIntへ切り捨ててから看板遅延を加えるため、同じ計算順序に合わせる。
-  const base = Math.trunc(x * quarterNoteMs);
-  if (base === target) return { text: "", errorMs: 0 };
-  const ratio = (target - base) / quarterNoteMs;
-  const fraction = limitDenominator(ratio, 10_000);
-  const reproduced = base + Math.round(quarterNoteMs * (fraction.numerator / fraction.denominator));
-  const text = fraction.denominator === 1
-    ? String(fraction.numerator)
-    : `${fraction.numerator}/${fraction.denominator}`;
-  return { text, errorMs: Math.abs(reproduced - target) };
-}
-
-function limitDenominator(value, maximumDenominator) {
-  if (!Number.isFinite(value) || value === 0) return { numerator: 0, denominator: 1 };
-  const sign = value < 0 ? -1 : 1;
-  const target = Math.abs(value);
-  let p0 = 0;
-  let q0 = 1;
-  let p1 = 1;
-  let q1 = 0;
-  let remainder = target;
-  while (true) {
-    const quotient = Math.floor(remainder);
-    const p2 = p0 + quotient * p1;
-    const q2 = q0 + quotient * q1;
-    if (q2 > maximumDenominator || p2 > 10_000) break;
-    p0 = p1;
-    q0 = q1;
-    p1 = p2;
-    q1 = q2;
-    const fractional = remainder - quotient;
-    if (fractional < Number.EPSILON) return { numerator: sign * p1, denominator: q1 };
-    remainder = 1 / fractional;
-  }
-  const multiplier = q1 > 0 ? Math.floor((maximumDenominator - q0) / q1) : 0;
-  const boundNumerator = p0 + multiplier * p1;
-  const boundDenominator = q0 + multiplier * q1;
-  const first = boundDenominator > 0 && boundNumerator <= 10_000
-    ? { numerator: boundNumerator, denominator: boundDenominator }
-    : { numerator: p0, denominator: q0 };
-  const second = q1 > 0 ? { numerator: p1, denominator: q1 } : first;
-  const firstError = Math.abs(target - first.numerator / first.denominator);
-  const secondError = Math.abs(target - second.numerator / second.denominator);
-  const selected = secondError <= firstError ? second : first;
-  return { numerator: sign * selected.numerator, denominator: selected.denominator };
+/** GridRecorderの`(timeIndex * stepMs).toInt()`と同じ基準時刻。 */
+function recordedTimeMs(column, bpm) {
+  return Math.trunc((column * 60_000) / bpm);
 }
 
 function blockIndex(x, y, z, width, length) {

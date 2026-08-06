@@ -31,7 +31,6 @@ const state = {
   automation: {},
   automationLane: "velocity",
   automationLaneHeight: 170,
-  schematicBpm: 120,
   view: { startMs: 0, endMs: 1000, minPitch: 36, maxPitch: 84 },
   sourcePitchRange: { min: 36, max: 84 },
   editorMode: "all",
@@ -324,7 +323,6 @@ function restoreSession(snapshot, notify = true) {
   state.automation = snapshot.automation && typeof snapshot.automation === "object" ? snapshot.automation : {};
   state.automationLane = AUTOMATION_LANES[snapshot.automationLane] ? snapshot.automationLane : "velocity";
   state.automationLaneHeight = clampNumber(snapshot.automationLaneHeight, 110, 320, 170);
-  state.schematicBpm = clampNumber(snapshot.schematicBpm, 1, 999, Math.round(state.midi.tempos?.[0]?.bpm || 120));
   state.sessionSavingEnabled = true;
   state.suspendedSession = null;
   updateSourcePitchRange();
@@ -354,7 +352,6 @@ function createSessionSnapshot() {
     automation: state.automation,
     automationLane: state.automationLane,
     automationLaneHeight: state.automationLaneHeight,
-    schematicBpm: state.schematicBpm,
   };
 }
 
@@ -409,7 +406,6 @@ function initializeEditor(midi) {
   state.automation = {};
   state.automationLane = "velocity";
   state.automationLaneHeight = 170;
-  state.schematicBpm = clampNumber(Math.round(midi.tempos?.[0]?.bpm || 120), 1, 999, 120);
   state.sessionSavingEnabled = true;
   let minPitch = 127;
   let maxPitch = 0;
@@ -560,6 +556,11 @@ function renderEditor() {
         <section class="selection-card selected-card">
           <div class="selected-count"><strong id="selected-count">0</strong><span>ノート選択中</span></div>
           <p id="selected-detail">ピアノロールまたは条件を使って音を選んでください。</p>
+          <div class="existing-part-form">
+            <label>既存パートへ移動<select id="existing-part-target" aria-label="選択ノートの移動先パート">${partDestinationOptions()}</select></label>
+            <button type="button" id="move-to-existing-part" class="secondary-button" disabled>選択音を移動</button>
+          </div>
+          <div class="part-action-divider"><span>または新しいパートを作成</span></div>
           <div class="new-part-form">
             <label>新しいパート名<input id="new-part-name" type="text" maxlength="80" value="新しいパート" /></label>
             <label>楽器<select id="new-part-instrument">${instrumentOptions("piano")}</select></label>
@@ -634,17 +635,17 @@ function renderEditor() {
           <span class="schematic-badge">/rec we grid 対応</span>
         </div>
         <p class="schematic-intro">
-          各音を音ブロックとして配置し、その1ブロック上の吊り下げ看板へ音量・Pan・細かなタイミング差を書き込みます。
-          通常看板でJSONが表示されるFAWE環境を避けるため、看板の上には支持用のオーク板材も配置します。
-          サーバーへ置かず、FAWEのクリップボードから直接録音できます。
+          JSONテキストが見える問題を避けるため、看板を一切含めず音ブロックだけを配置します。
+          音量とPanは破棄し、最小の発音間隔がX方向の1ブロック以上になるまで全体を広げ、その間隔に合わせてBPMを自動的に上げます。
+          ワールドへ貼り付けず、FAWEのクリップボードから直接録音できます。
         </p>
         <div class="schematic-controls">
-          <label class="field-row schematic-bpm-field"><span>グリッドBPM</span><span class="inline-field"><input id="schematic-bpm" type="number" min="1" max="999" step="1" value="${state.schematicBpm}" /> BPM</span></label>
+          <div class="schematic-auto-rule"><span>時間グリッド</span><strong>最小発音間隔から自動計算</strong></div>
           <button type="button" id="schematic-download" class="schematic-download-button">FAWE .schem をダウンロード <span>↓</span></button>
         </div>
         <div id="schematic-summary" class="schematic-summary" aria-live="polite"></div>
-        <div class="sign-format" aria-label="看板フォーマット">
-          <span><b>1行目</b> 音量 0〜100</span><span><b>2行目</b> Pan −100〜100</span><span><b>3行目</b> 四分音符に対する時刻差</span><span><b>4行目</b> カスタム音源ID（任意）</span>
+        <div class="sign-format" aria-label="Schematic出力仕様">
+          <span><b>看板</b> 配置しない</span><span><b>音量</b> 破棄して100</span><span><b>Pan</b> 破棄して0</span><span><b>タイミング</b> X間隔とBPMで再現</span>
         </div>
         <p id="schematic-status" class="schematic-status">書き出し準備ができています。</p>
       </section>
@@ -731,6 +732,9 @@ function bindEditorEvents(recommendedTranspose) {
   document.querySelector("#add-range").addEventListener("click", () => selectByInputs(true));
   document.querySelector("#clear-selection").addEventListener("click", () => setSelection(new Set()));
   document.querySelector("#create-part").addEventListener("click", createPartFromSelection);
+  document.querySelector("#move-to-existing-part").addEventListener("click", () => {
+    moveSelectedNotesToPart(document.querySelector("#existing-part-target").value);
+  });
   document.querySelector("#apply-note-shift").addEventListener("click", applySelectedNoteShift);
   document.querySelector("#apply-single-note").addEventListener("click", applySingleNoteEdit);
   document.querySelector("#delete-notes").addEventListener("click", deleteSelectedNotes);
@@ -770,15 +774,6 @@ function bindEditorEvents(recommendedTranspose) {
     if (preview.playing) await preview.play(state.conversion.notes, state.previewPositionMs);
   });
   document.querySelector("#download-button").addEventListener("click", downloadPackage);
-  const schematicBpm = document.querySelector("#schematic-bpm");
-  schematicBpm.addEventListener("input", (event) => {
-    state.schematicBpm = clampNumber(Math.round(Number(event.target.value)), 1, 999, 120);
-    renderSchematicSummary();
-    scheduleSessionSave();
-  });
-  schematicBpm.addEventListener("change", (event) => {
-    event.target.value = state.schematicBpm;
-  });
   document.querySelector("#schematic-download").addEventListener("click", downloadSchematic);
 }
 
@@ -1165,6 +1160,11 @@ function updateSelectionUi() {
   const deleteNotes = document.querySelector("#delete-notes");
   const singleEditor = document.querySelector("#single-note-editor");
   create.disabled = state.selectedIds.size === 0;
+  updatePartDestinationControl();
+  document.querySelectorAll('[data-action="move-selection"]').forEach((button) => {
+    const partId = button.closest("[data-part-id]")?.dataset.partId;
+    button.disabled = !partId || !canMoveSelectionToPart(partId);
+  });
   if (applyShift) applyShift.disabled = state.selectedIds.size === 0;
   if (deleteNotes) deleteNotes.disabled = state.selectedIds.size === 0;
   if (singleEditor) singleEditor.hidden = state.selectedIds.size !== 1;
@@ -1210,6 +1210,57 @@ function createPartFromSelection() {
   refreshRoll();
   scheduleRecalculation();
   document.querySelector("#parts").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function moveSelectedNotesToPart(partId) {
+  if (state.selectedIds.size === 0) return;
+  const targetPart = state.parts.find((part) => part.id === partId);
+  if (!targetPart) {
+    showEditorNotice("移動先のパートを選んでください。", "error");
+    updatePartDestinationControl();
+    return;
+  }
+  const movableIds = new Set([...state.selectedIds].filter((id) => state.assignments[id] !== partId));
+  if (movableIds.size === 0) {
+    showEditorNotice(`選択ノートはすでに「${targetPart.name}」にあります。`, "error");
+    updatePartDestinationControl();
+    return;
+  }
+  state.assignments = moveSelectionToPart(state.assignments, movableIds, partId);
+  state.parts = deleteEmptyParts(state.parts, state.assignments);
+  state.activePartId = partId;
+  state.selectedIds = new Set();
+  renderParts();
+  renderPartTabs();
+  updateSelectionUi();
+  refreshRoll();
+  scheduleRecalculation();
+  showEditorNotice(`${formatNumber(movableIds.size)}音を「${targetPart.name}」へ移動しました。`);
+}
+
+function canMoveSelectionToPart(partId) {
+  if (state.selectedIds.size === 0) return false;
+  return [...state.selectedIds].some((id) => state.assignments[id] !== partId);
+}
+
+function updatePartDestinationControl() {
+  const select = document.querySelector("#existing-part-target");
+  const button = document.querySelector("#move-to-existing-part");
+  if (!select || !button) return;
+  const previous = select.value;
+  const candidates = state.selectedIds.size === 0
+    ? state.parts
+    : state.parts.filter((part) => canMoveSelectionToPart(part.id));
+  select.innerHTML = candidates.length > 0
+    ? candidates.map((part) => `<option value="${escapeAttribute(part.id)}">${escapeHtml(part.name)}</option>`).join("")
+    : '<option value="">移動先となる別パートがありません</option>';
+  if (candidates.some((part) => part.id === previous)) select.value = previous;
+  else {
+    const preferred = candidates.find((part) => part.id !== state.activePartId) || candidates[0];
+    select.value = preferred?.id || "";
+  }
+  select.disabled = candidates.length === 0;
+  button.disabled = state.selectedIds.size === 0 || candidates.length === 0;
 }
 
 function applySelectedNoteShift() {
@@ -1317,7 +1368,7 @@ function renderParts() {
       <label class="part-check"><input data-action="percussion" type="checkbox" ${part.percussion ? "checked" : ""} /><span>打楽器マップ</span></label>
       <label class="part-check"><input data-action="mute" type="checkbox" ${part.muted ? "checked" : ""} /><span>ミュート</span></label>
       <button type="button" data-action="edit-part" class="compact-button ${state.editorMode === "part" && state.activePartId === part.id ? "is-active" : ""}">このパートを編集</button>
-      <button type="button" data-action="move-selection" class="compact-button" ${state.selectedIds.size === 0 ? "disabled" : ""}>選択音をここへ</button>
+      <button type="button" data-action="move-selection" class="compact-button" ${canMoveSelectionToPart(part.id) ? "" : "disabled"}>選択音をここへ</button>
     </article>
   `).join("");
 
@@ -1327,16 +1378,7 @@ function renderParts() {
     card.addEventListener("change", (event) => updatePart(partId, event.target));
     card.querySelector('[data-action="edit-part"]').addEventListener("click", () => setActivePart(partId));
     card.querySelector('[data-action="move-selection"]').addEventListener("click", () => {
-      if (state.selectedIds.size === 0) return;
-      state.assignments = moveSelectionToPart(state.assignments, state.selectedIds, partId);
-      state.parts = deleteEmptyParts(state.parts, state.assignments);
-      if (!state.parts.some((part) => part.id === state.activePartId)) state.activePartId = state.parts[0]?.id || null;
-      state.selectedIds = new Set();
-      renderParts();
-      renderPartTabs();
-      updateSelectionUi();
-      refreshRoll();
-      scheduleRecalculation();
+      moveSelectedNotesToPart(partId);
     });
   });
 }
@@ -1357,6 +1399,7 @@ function updatePart(partId, target) {
     scheduleRecalculation();
   } else {
     renderPartTabs();
+    updatePartDestinationControl();
     scheduleSessionSave();
   }
 }
@@ -1514,16 +1557,26 @@ function renderSchematicSummary() {
     return;
   }
   try {
-    const plan = planGridSchematic(state.conversion.notes, state.schematicBpm);
+    const baseBpm = Math.round(state.midi.tempos?.[0]?.bpm || 120);
+    const plan = planGridSchematic(state.conversion.notes, baseBpm);
     summary.innerHTML = [
       metric("実BPM", formatNumber(plan.bpm)),
+      metric("最小間隔", plan.minimumIntervalMs == null ? "—" : `${formatNumber(plan.minimumIntervalMs)} ms`),
       metric("寸法", `${formatNumber(plan.width)} × ${formatNumber(plan.height)} × ${formatNumber(plan.length)}`),
       metric("配置ブロック", formatNumber(plan.blockCount)),
-      metric("生成目安", formatBytes(plan.estimatedBytes)),
     ].join("");
-    status.innerHTML = plan.bpmAdjusted
-      ? `曲が長いためBPMを <b>${formatNumber(plan.requestedBpm)}</b> から <b>${formatNumber(plan.bpm)}</b> へ自動調整します。東向きで <code>/rec we grid ${plan.bpm}</code> を実行してください。`
-      : `東向きで <code>/rec we grid ${plan.bpm}</code> を実行してください。最大タイミング誤差は ${formatNumber(plan.maxTimingErrorMs)} ms です。`;
+    const command = `<code>/rec we grid ${plan.bpm}</code>`;
+    if (plan.bpmReducedForSize) {
+      const collapsed = plan.collapsedOnsetCount > 0
+        ? ` ${formatNumber(plan.collapsedOnsetCount)}個の発音位置が同じ列へ統合されます。`
+        : "";
+      status.innerHTML = `必要BPMは <b>${formatNumber(plan.targetBpm)}</b> ですが、Schematicの横幅上限に収めるため <b>${formatNumber(plan.bpm)}</b> に調整します。${collapsed} 最大タイミング誤差は ${formatNumber(plan.maxTimingErrorMs)} msです。東向きで ${command} を実行してください。`;
+    } else {
+      const scaling = plan.bpmRaised
+        ? `元のBPM ${formatNumber(plan.baseBpm)} から <b>${formatNumber(plan.bpm)}</b> へ自動的に上げ、時間軸を拡大します。`
+        : `BPM <b>${formatNumber(plan.bpm)}</b> で時間軸を配置します。`;
+      status.innerHTML = `${scaling} 看板なし・音量100・Pan 0で記録されます。最大タイミング誤差は ${formatNumber(plan.maxTimingErrorMs)} msです。東向きで ${command} を実行してください。`;
+    }
     button.disabled = false;
   } catch (error) {
     summary.innerHTML = "";
@@ -1539,20 +1592,16 @@ async function downloadSchematic() {
   button.disabled = true;
   status.textContent = "ブラウザ内でSponge Schematic v3を生成・圧縮しています…";
   try {
+    const baseBpm = Math.round(state.midi.tempos?.[0]?.bpm || 120);
     const result = await encodeSpongeSchematic({
       notes: state.conversion.notes,
-      bpm: state.schematicBpm,
+      baseBpm,
       title: state.title || state.midi.title || "OMMT Grid",
     });
-    if (result.plan.bpmAdjusted) {
-      state.schematicBpm = result.plan.bpm;
-      document.querySelector("#schematic-bpm").value = result.plan.bpm;
-      scheduleSessionSave();
-    }
     const baseName = safeFileName((state.title || state.midi.title || "ommt-grid").trim());
     downloadBlob(result.blob, `${baseName}.schem`);
     renderSchematicSummary();
-    status.innerHTML = `${formatBytes(result.compressedBytes)} の.schemを書き出しました。東向きで <code>/rec we grid ${result.plan.bpm}</code> を実行してください。`;
+    status.innerHTML = `${formatBytes(result.compressedBytes)} の看板なし.schemを書き出しました。音量100・Pan 0で記録されます。東向きで <code>/rec we grid ${result.plan.bpm}</code> を実行してください。`;
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : ".schemの生成に失敗しました。";
     button.disabled = false;
@@ -1573,6 +1622,11 @@ function activePart() {
 
 function partControlOptions() {
   return state.parts.map((part) => `<option value="${escapeAttribute(part.id)}" ${part.id === state.activePartId ? "selected" : ""}>${escapeHtml(part.name)}</option>`).join("");
+}
+
+function partDestinationOptions() {
+  if (state.parts.length === 0) return '<option value="">移動先となる別パートがありません</option>';
+  return state.parts.map((part) => `<option value="${escapeAttribute(part.id)}">${escapeHtml(part.name)}</option>`).join("");
 }
 
 function automationLaneTabs() {

@@ -1114,7 +1114,8 @@ button:disabled {
 }
 
 .range-form,
-.new-part-form {
+.new-part-form,
+.existing-part-form {
   display: grid;
   gap: 0.7rem;
 }
@@ -1156,19 +1157,53 @@ button:disabled {
   margin-bottom: 0.85rem;
 }
 
+.existing-part-form {
+  grid-column: 2;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.part-action-divider {
+  display: flex;
+  grid-column: 2;
+  gap: 0.7rem;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.part-action-divider::before,
+.part-action-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+  content: "";
+}
+
+.part-action-divider span {
+  white-space: nowrap;
+}
+
 .range-form label,
-.new-part-form label {
+.new-part-form label,
+.existing-part-form label {
   color: var(--muted);
   font-size: 0.67rem;
 }
 
 .range-form input,
 .new-part-form input,
-.new-part-form select {
+.new-part-form select,
+.existing-part-form select {
   width: 100%;
   margin-top: 0.35rem;
   padding: 0.62rem;
   font-family: var(--font-mono);
+}
+
+.existing-part-form .secondary-button {
+  min-height: 40px;
+  white-space: nowrap;
 }
 
 .button-row {
@@ -1185,7 +1220,7 @@ button:disabled {
 }
 
 .selected-count {
-  grid-row: span 2;
+  grid-row: 1 / span 5;
   display: flex;
   min-width: 7rem;
   flex-direction: column;
@@ -1551,9 +1586,21 @@ button:disabled {
   padding: 0.75rem 0;
 }
 
-.schematic-bpm-field {
+.schematic-auto-rule {
+  display: grid;
+  gap: 0.25rem;
   min-width: min(100%, 24rem);
-  border-top: 0;
+}
+
+.schematic-auto-rule span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+}
+
+.schematic-auto-rule strong {
+  color: #d9dfcf;
+  font-size: 0.86rem;
 }
 
 .schematic-download-button {
@@ -1901,7 +1948,8 @@ footer {
   }
 
   .range-form,
-  .new-part-form {
+  .new-part-form,
+  .existing-part-form {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1917,6 +1965,12 @@ footer {
   }
 
   .selected-card .primary-button {
+    grid-column: 1;
+  }
+
+  .existing-part-form,
+  .part-action-divider,
+  .new-part-form {
     grid-column: 1;
   }
 
