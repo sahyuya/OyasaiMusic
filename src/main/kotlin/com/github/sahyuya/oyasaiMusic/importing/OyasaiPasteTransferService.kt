@@ -10,90 +10,120 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 
 /**
- * OMMTが生成した`.oyasai`を、チャットへ貼り付けられる短いBase64URL断片として受け取る。
+ * OMMTが生成した`.oyasai`を、Paperダイアログへ貼り付けるBase64URL文字列として受け取る。
  *
- * 入力はコードとして実行せず、サイズ、文字種、順序、SHA-256、gzip展開後サイズを検証してから
- * 既存の厳格な`.oyasai`パーサーへ渡す。
+ * 通常は1回で完了する。Minecraftのダイアログ返信NBTには約32KBの上限があるため、大きな曲だけ
+ * 約23KBずつ継続して受け取る。入力はコードとして実行せず、サイズ、文字種、順序、SHA-256、
+ * gzip展開後サイズを検証してから既存の厳格な`.oyasai`パーサーへ渡す。
  */
 class OyasaiPasteTransferService {
   companion object {
-    private const val MAX_CHUNK_LENGTH = 180
+    const val MAX_DIALOG_INPUT_CHARACTERS = 24_000
+    private const val MAX_SEGMENT_PAYLOAD_CHARACTERS = 23_500
     private const val MAX_ENCODED_CHARACTERS = 32 * 1024 * 1024
     private const val MAX_TOTAL_ENCODED_CHARACTERS = 64 * 1024 * 1024
     private const val MAX_COMPRESSED_BYTES = 24 * 1024 * 1024
     private const val MAX_DECOMPRESSED_BYTES = 32 * 1024 * 1024
-    private const val MAX_CHUNKS = 220_000
+    private const val MAX_SEGMENTS = 1_500
     private const val MAX_ACTIVE_SESSIONS = 32
     private val SESSION_TIMEOUT = Duration.ofMinutes(10).toMillis()
-    private val BASE64_URL_CHUNK = Regex("^[A-Za-z0-9_-]+$")
+    private val BASE64_URL_PAYLOAD = Regex("^[A-Za-z0-9_-]+$")
     private val SHA_256_HEX = Regex("^[0-9a-fA-F]{64}$")
+    private val TRANSFER_ID = Regex("^[0-9a-fA-F]{32}$")
   }
 
   private data class Session(
-      val expectedChunks: Int,
+      val transferId: String,
+      val expectedSegments: Int,
       val checksum: String,
       val createdAtMs: Long,
-      val chunks: MutableList<String> = ArrayList(),
+      val segments: MutableList<String> = ArrayList(),
       var encodedCharacters: Int = 0,
   )
 
   data class SealedTransfer(
-      val chunks: List<String>,
+      val segments: List<String>,
       val checksum: String,
   )
 
+  sealed interface ReceiveResult {
+    data class Pending(val received: Int, val expected: Int) : ReceiveResult
+
+    data class Complete(val transfer: SealedTransfer) : ReceiveResult
+  }
+
   private val sessions = ConcurrentHashMap<UUID, Session>()
 
-  fun begin(playerId: UUID, expectedChunks: Int, checksum: String) {
+  /** `OMMT1:<転送ID>:<番号>:<総数>:<SHA-256>:<Base64URL>` を1回分受け取る。 */
+  @Synchronized
+  fun receive(playerId: UUID, rawText: String): ReceiveResult {
     expireOldSessions()
-    require(expectedChunks in 1..MAX_CHUNKS) { "分割数が範囲外です。" }
+    val text = rawText.trim()
+    require(text.length in 1..MAX_DIALOG_INPUT_CHARACTERS) {
+      "1回分のデータが空か、Minecraftで安全に送信できる長さを超えています。"
+    }
+    val fields = text.split(':', limit = 6)
+    require(fields.size == 6 && fields[0] == "OMMT1") { "OMMT1形式のデータではありません。" }
+    val transferId = fields[1].lowercase()
+    val index = fields[2].toIntOrNull() ?: throw IllegalArgumentException("送信番号が不正です。")
+    val expectedSegments = fields[3].toIntOrNull() ?: throw IllegalArgumentException("送信回数が不正です。")
+    val checksum = fields[4].lowercase()
+    val payload = fields[5]
+    require(TRANSFER_ID.matches(transferId)) { "転送IDが不正です。" }
+    require(expectedSegments in 1..MAX_SEGMENTS && index in 1..expectedSegments) {
+      "送信番号または送信回数が範囲外です。"
+    }
     require(SHA_256_HEX.matches(checksum)) { "SHA-256チェックサムが不正です。" }
-    require(sessions.containsKey(playerId) || sessions.size < MAX_ACTIVE_SESSIONS) {
-      "同時に処理できる転送数の上限に達しています。しばらくしてからやり直してください。"
+    require(payload.length in 1..MAX_SEGMENT_PAYLOAD_CHARACTERS && BASE64_URL_PAYLOAD.matches(payload)) {
+      "データに使用できない文字があるか、1回分が長すぎます。"
     }
-    sessions[playerId] =
-        Session(
-            expectedChunks = expectedChunks,
-            checksum = checksum.lowercase(),
-            createdAtMs = System.currentTimeMillis(),
-        )
-  }
 
-  fun add(playerId: UUID, index: Int, chunk: String): Pair<Int, Int> {
-    val session = activeSession(playerId)
-    require(index == session.chunks.size) {
-      "分割番号が順番どおりではありません。次は ${session.chunks.size} です。"
+    val previous = sessions[playerId]
+    val session =
+        if (previous == null || previous.transferId != transferId) {
+          require(index == 1) { "新しい転送は1回目のデータから貼り付けてください。" }
+          require(previous != null || sessions.size < MAX_ACTIVE_SESSIONS) {
+            "同時に処理できる転送数の上限に達しています。しばらくしてからやり直してください。"
+          }
+          Session(
+                  transferId = transferId,
+                  expectedSegments = expectedSegments,
+                  checksum = checksum,
+                  createdAtMs = System.currentTimeMillis(),
+              )
+              .also { sessions[playerId] = it }
+        } else {
+          previous
+        }
+
+    require(session.expectedSegments == expectedSegments && session.checksum == checksum) {
+      "同じ転送内で送信回数またはチェックサムが変わっています。最初からやり直してください。"
     }
-    require(index < session.expectedChunks) { "宣言された分割数を超えています。" }
-    require(chunk.length in 1..MAX_CHUNK_LENGTH && BASE64_URL_CHUNK.matches(chunk)) {
-      "データ断片に使用できない文字があるか、1行が長すぎます。"
+    require(index == session.segments.size + 1) {
+      "貼り付け順が違います。次は ${session.segments.size + 1}/${session.expectedSegments} です。"
     }
-    require(session.encodedCharacters + chunk.length <= MAX_ENCODED_CHARACTERS) {
+    require(session.encodedCharacters + payload.length <= MAX_ENCODED_CHARACTERS) {
       "コピペデータがサーバーの上限を超えています。"
     }
-    require(sessions.values.sumOf { it.encodedCharacters.toLong() } + chunk.length <= MAX_TOTAL_ENCODED_CHARACTERS) {
+    require(sessions.values.sumOf { it.encodedCharacters.toLong() } + payload.length <= MAX_TOTAL_ENCODED_CHARACTERS) {
       "サーバー全体のコピペ受信上限に達しています。しばらくしてからやり直してください。"
     }
-    session.chunks += chunk
-    session.encodedCharacters += chunk.length
-    return session.chunks.size to session.expectedChunks
-  }
-
-  fun seal(playerId: UUID): SealedTransfer {
-    val session = activeSession(playerId)
-    require(session.chunks.size == session.expectedChunks) {
-      "データが不足しています（${session.chunks.size}/${session.expectedChunks}）。"
+    session.segments += payload
+    session.encodedCharacters += payload.length
+    if (session.segments.size < session.expectedSegments) {
+      return ReceiveResult.Pending(session.segments.size, session.expectedSegments)
     }
     require(sessions.remove(playerId, session)) { "転送状態が更新されました。最初からやり直してください。" }
-    return SealedTransfer(session.chunks.toList(), session.checksum)
+    return ReceiveResult.Complete(SealedTransfer(session.segments.toList(), session.checksum))
   }
 
+  @Synchronized
   fun cancel(playerId: UUID): Boolean = sessions.remove(playerId) != null
 
   fun decode(transfer: SealedTransfer): ByteArray {
-    val encodedLength = transfer.chunks.sumOf { it.length }
+    val encodedLength = transfer.segments.sumOf { it.length }
     require(encodedLength <= MAX_ENCODED_CHARACTERS) { "コピペデータがサーバーの上限を超えています。" }
-    val encoded = buildString(encodedLength) { transfer.chunks.forEach(::append) }
+    val encoded = buildString(encodedLength) { transfer.segments.forEach(::append) }
     val compressed =
         try {
           Base64.getUrlDecoder().decode(encoded)
@@ -107,15 +137,6 @@ class OyasaiPasteTransferService {
       "チェックサムが一致しません。データの欠落または改変を検出しました。"
     }
     return gunzipBounded(compressed)
-  }
-
-  private fun activeSession(playerId: UUID): Session {
-    val session = sessions[playerId] ?: throw IllegalArgumentException("転送が開始されていません。")
-    if (System.currentTimeMillis() - session.createdAtMs > SESSION_TIMEOUT) {
-      sessions.remove(playerId, session)
-      throw IllegalArgumentException("転送が10分で期限切れになりました。最初からやり直してください。")
-    }
-    return session
   }
 
   private fun expireOldSessions() {

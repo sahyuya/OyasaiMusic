@@ -695,10 +695,10 @@ button:disabled {
 
 .daw-commandbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas:
-    "track transport"
-    "tools tools";
+    "track track"
+    "transport tools";
   min-height: 62px;
   align-items: stretch;
   border-bottom: 1px solid #373c46;
@@ -717,7 +717,10 @@ button:disabled {
 .track-strip {
   grid-area: track;
   min-width: 0;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #343943;
+  overflow: visible;
+  row-gap: 0.65rem;
 }
 
 .track-color {
@@ -762,7 +765,9 @@ button:disabled {
 
 .active-part-controls {
   display: flex;
+  flex: 1 1 42rem;
   min-width: 0;
+  flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
 }
@@ -831,9 +836,10 @@ button:disabled {
 
 .arrange-transport {
   grid-area: transport;
-  justify-content: center;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   border-right: 1px solid #343943;
-  border-left: 1px solid #343943;
 }
 
 .transport-button,
@@ -908,19 +914,9 @@ button:disabled {
 
 .edit-tools {
   grid-area: tools;
+  min-width: 0;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  border-top: 1px solid #343943;
-}
-
-@media (min-width: 1600px) {
-  .daw-commandbar {
-    grid-template-columns: minmax(650px, 1fr) auto auto;
-    grid-template-areas: "track transport tools";
-  }
-
-  .edit-tools {
-    border-top: 0;
-  }
 }
 
 .tool-button {
@@ -1892,6 +1888,27 @@ button:disabled {
 .paste-export .button-row span {
   color: var(--muted);
   font-size: 0.62rem;
+}
+
+.paste-export code {
+  color: var(--leaf-strong);
+  font-family: var(--font-mono);
+}
+
+.paste-navigation {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.55rem;
+}
+
+.paste-navigation span {
+  min-width: 5rem;
+  color: #cce8aa;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-align: center;
 }
 
 .schematic-card {

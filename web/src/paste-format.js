@@ -1,9 +1,13 @@
-const DEFAULT_CHUNK_SIZE = 160;
-const MAX_CHUNK_SIZE = 180;
+const DEFAULT_SEGMENT_SIZE = 23_500;
+const MAX_SEGMENT_SIZE = 23_500;
+const TRANSFER_PREFIX = "OMMT1";
 
-/** `.oyasai`を安全なURL-safe Base64へ圧縮し、Minecraftへ1行ずつ貼れるコマンド列にする。 */
-export async function encodePasteCommands(source, { chunkSize = DEFAULT_CHUNK_SIZE } = {}) {
-  const safeChunkSize = Math.max(40, Math.min(MAX_CHUNK_SIZE, Math.round(Number(chunkSize) || DEFAULT_CHUNK_SIZE)));
+/**
+ * `.oyasai`を圧縮し、Paper Dialog APIへ貼り付ける検証付き文字列へ変換する。
+ * 通常は1回、Minecraftの受信上限を超える大きな曲だけ約23KBずつに分割する。
+ */
+export async function encodePasteTransfer(source, { segmentSize = DEFAULT_SEGMENT_SIZE } = {}) {
+  const safeSegmentSize = Math.max(256, Math.min(MAX_SEGMENT_SIZE, Math.round(Number(segmentSize) || DEFAULT_SEGMENT_SIZE)));
   const bytes = await sourceBytes(source);
   if (typeof CompressionStream !== "function") {
     throw new Error("このブラウザはコピペデータのgzip圧縮に対応していません。");
@@ -18,17 +22,16 @@ export async function encodePasteCommands(source, { chunkSize = DEFAULT_CHUNK_SI
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", compressed));
   const checksum = [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
   const encoded = base64UrlEncode(compressed);
-  const chunks = [];
-  for (let offset = 0; offset < encoded.length; offset += safeChunkSize) chunks.push(encoded.slice(offset, offset + safeChunkSize));
-  const commands = [
-    `/mm paste begin ${chunks.length} ${checksum}`,
-    ...chunks.map((chunk, index) => `/mm paste add ${index} ${chunk}`),
-    "/mm paste finish",
-  ];
+  const payloads = [];
+  for (let offset = 0; offset < encoded.length; offset += safeSegmentSize) payloads.push(encoded.slice(offset, offset + safeSegmentSize));
+  const transferId = checksum.slice(0, 32);
+  const segments = payloads.map(
+    (payload, index) => `${TRANSFER_PREFIX}:${transferId}:${index + 1}:${payloads.length}:${checksum}:${payload}`,
+  );
   return {
-    text: commands.join("\n"),
-    commands,
-    chunkCount: chunks.length,
+    text: segments.join("\n"),
+    segments,
+    segmentCount: segments.length,
     checksum,
     originalBytes: bytes.byteLength,
     compressedBytes: compressed.byteLength,

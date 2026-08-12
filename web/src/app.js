@@ -12,7 +12,8 @@ import { NOTE_BLOCK_INSTRUMENTS } from "./instruments.js";
 import { buildRulerGrid, buildTimeGrid } from "./grid.js";
 import { mergeMidiDocuments } from "./midi-merge.js";
 import { encodeOyasaiPackage, downloadBlob } from "./oyasai-format.js";
-import { encodePasteCommands } from "./paste-format.js";
+import { encodePasteTransfer } from "./paste-format.js";
+import { normalizePreviewStart, selectPreviewNotes } from "./preview-selection.js";
 import { encodeSpongeSchematic, planGridSchematic } from "./schematic.js";
 import { PianoRoll } from "./piano-roll.js";
 import { AUTOMATION_LANES, AutomationLane } from "./automation-lane.js";
@@ -78,6 +79,8 @@ const preview = new PreviewPlayer({
   },
 });
 const keyboardPreview = new PreviewPlayer();
+let pasteTransferSegments = [];
+let pasteTransferIndex = 0;
 
 document.addEventListener("fullscreenchange", updateFullscreenButton);
 
@@ -606,11 +609,16 @@ function renderEditor() {
           </div>
           <button type="button" id="download-button" class="download-button">.oyasai をダウンロード <span>↓</span></button>
           <div class="paste-export">
-            <button type="button" id="generate-paste" class="secondary-button">サーバーへコピペするデータを作る</button>
-            <p id="paste-status">専用コマンド列へ圧縮し、チェックサムで改変を検出します。</p>
+            <button type="button" id="generate-paste" class="secondary-button">Paperダイアログ用データを作る</button>
+            <p id="paste-status">長文データへ圧縮し、SHA-256で欠落や改変を検出します。</p>
             <div id="paste-output" hidden>
-              <textarea id="paste-commands" readonly spellcheck="false" aria-label="Minecraftへ貼り付けるコマンド列"></textarea>
-              <div class="button-row"><button type="button" id="copy-paste-commands" class="primary-button small">すべてコピー</button><span>上から1行ずつMinecraftのチャットへ貼り付けます</span></div>
+              <textarea id="paste-data" readonly spellcheck="false" wrap="off" aria-label="Paperダイアログへ貼り付けるOMMTデータ"></textarea>
+              <div class="paste-navigation">
+                <button type="button" id="previous-paste-segment" class="secondary-button small">← 前</button>
+                <span id="paste-segment-count">1 / 1</span>
+                <button type="button" id="next-paste-segment" class="secondary-button small">次 →</button>
+              </div>
+              <div class="button-row"><button type="button" id="copy-paste-data" class="primary-button small">この1回分をコピー</button><span>Minecraftで <code>/mm paste</code> を実行し、開いた欄へ貼り付けて送信します</span></div>
             </div>
           </div>
         </section>
@@ -710,6 +718,8 @@ function bindEditorEvents(recommendedTranspose) {
   document.querySelector("#automation-part").addEventListener("change", (event) => {
     preview.stop();
     state.activePartId = event.target.value;
+    const notes = previewNotes();
+    if (notes.length > 0) setPreviewPosition(normalizePreviewStart(notes, state.previewPositionMs));
     refreshActivePartControls();
     refreshRoll();
     refreshAutomationLane();
@@ -766,7 +776,9 @@ function bindEditorEvents(recommendedTranspose) {
   });
   document.querySelector("#download-button").addEventListener("click", downloadPackage);
   document.querySelector("#generate-paste").addEventListener("click", generatePasteTransfer);
-  document.querySelector("#copy-paste-commands").addEventListener("click", copyPasteCommands);
+  document.querySelector("#copy-paste-data").addEventListener("click", copyPasteData);
+  document.querySelector("#previous-paste-segment").addEventListener("click", () => changePasteSegment(-1));
+  document.querySelector("#next-paste-segment").addEventListener("click", () => changePasteSegment(1));
   document.querySelector("#schematic-download").addEventListener("click", downloadSchematic);
   updateFullscreenButton();
 }
@@ -1532,12 +1544,14 @@ function renderConversion() {
   document.querySelector("#preview-button").disabled = state.conversion.notes.length === 0;
   const pasteButton = document.querySelector("#generate-paste");
   const pasteOutput = document.querySelector("#paste-output");
-  const pasteCommands = document.querySelector("#paste-commands");
+  const pasteData = document.querySelector("#paste-data");
   const pasteStatus = document.querySelector("#paste-status");
   if (pasteButton) pasteButton.disabled = state.conversion.notes.length === 0;
   if (pasteOutput) pasteOutput.hidden = true;
-  if (pasteCommands) pasteCommands.value = "";
-  if (pasteStatus) pasteStatus.textContent = "専用コマンド列へ圧縮し、チェックサムで改変を検出します。";
+  if (pasteData) pasteData.value = "";
+  pasteTransferSegments = [];
+  pasteTransferIndex = 0;
+  if (pasteStatus) pasteStatus.textContent = "長文データへ圧縮し、SHA-256で欠落や改変を検出します。";
   renderSchematicSummary();
   state.previewPositionMs = Math.min(state.previewPositionMs, metrics.durationMs);
   const seek = document.querySelector("#preview-seek");
@@ -1564,6 +1578,7 @@ async function togglePreview() {
     updateArrangeTransport();
     return;
   }
+  setPreviewPosition(normalizePreviewStart(notes, state.previewPositionMs));
   await preview.play(notes, state.previewPositionMs);
   updatePreviewButton(preview.playing);
   updateArrangeTransport();
@@ -1629,9 +1644,7 @@ function previewSourceTime() {
 }
 
 function previewNotes() {
-  const notes = state.conversion?.notes || [];
-  if (state.editorMode !== "part" || !state.activePartId) return notes;
-  return notes.filter((note) => note.partId === state.activePartId);
+  return selectPreviewNotes(state.conversion?.notes || [], state.editorMode, state.activePartId);
 }
 
 async function previewPianoKey(midiPitch) {
@@ -1663,7 +1676,7 @@ async function generatePasteTransfer() {
   const button = document.querySelector("#generate-paste");
   const status = document.querySelector("#paste-status");
   const output = document.querySelector("#paste-output");
-  const textarea = document.querySelector("#paste-commands");
+  const textarea = document.querySelector("#paste-data");
   if (!button || !status || !output || !textarea || !state.conversion?.notes?.length) return;
   button.disabled = true;
   output.hidden = true;
@@ -1676,10 +1689,14 @@ async function generatePasteTransfer() {
       settings: state.settings,
       title: state.title,
     });
-    const transfer = await encodePasteCommands(blob);
-    textarea.value = transfer.text;
+    const transfer = await encodePasteTransfer(blob);
+    pasteTransferSegments = transfer.segments;
+    pasteTransferIndex = 0;
+    renderPasteSegment();
     output.hidden = false;
-    status.textContent = `${formatBytes(transfer.originalBytes)}を${formatBytes(transfer.compressedBytes)}へ圧縮しました。全${formatNumber(transfer.commands.length)}行（データ${formatNumber(transfer.chunkCount)}分割）です。`;
+    status.textContent = transfer.segmentCount === 1
+      ? `${formatBytes(transfer.originalBytes)}を${formatBytes(transfer.compressedBytes)}へ圧縮しました。Paperダイアログへ1回貼り付ければ送信できます。`
+      : `${formatBytes(transfer.originalBytes)}を${formatBytes(transfer.compressedBytes)}へ圧縮しました。Minecraftの通信上限に合わせ、全${formatNumber(transfer.segmentCount)}回で送信します。`;
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : "コピペ用データを作成できませんでした。";
   } finally {
@@ -1687,8 +1704,26 @@ async function generatePasteTransfer() {
   }
 }
 
-async function copyPasteCommands() {
-  const textarea = document.querySelector("#paste-commands");
+function changePasteSegment(delta) {
+  if (pasteTransferSegments.length === 0) return;
+  pasteTransferIndex = Math.max(0, Math.min(pasteTransferSegments.length - 1, pasteTransferIndex + delta));
+  renderPasteSegment();
+}
+
+function renderPasteSegment() {
+  const textarea = document.querySelector("#paste-data");
+  const count = document.querySelector("#paste-segment-count");
+  const previous = document.querySelector("#previous-paste-segment");
+  const next = document.querySelector("#next-paste-segment");
+  if (!textarea || pasteTransferSegments.length === 0) return;
+  textarea.value = pasteTransferSegments[pasteTransferIndex];
+  if (count) count.textContent = `${pasteTransferIndex + 1} / ${pasteTransferSegments.length}`;
+  if (previous) previous.disabled = pasteTransferIndex === 0;
+  if (next) next.disabled = pasteTransferIndex === pasteTransferSegments.length - 1;
+}
+
+async function copyPasteData() {
+  const textarea = document.querySelector("#paste-data");
   if (!textarea?.value) return;
   try {
     await navigator.clipboard.writeText(textarea.value);
@@ -1700,7 +1735,8 @@ async function copyPasteCommands() {
       return;
     }
   }
-  showEditorNotice("Minecraftへ貼り付けるコマンド列をコピーしました。");
+  const suffix = pasteTransferSegments.length > 1 ? `（${pasteTransferIndex + 1}/${pasteTransferSegments.length}）` : "";
+  showEditorNotice(`Paperダイアログへ貼り付けるデータをコピーしました${suffix}。`);
 }
 
 function renderSchematicSummary() {

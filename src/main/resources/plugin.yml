@@ -21,7 +21,7 @@ commands:
   musicmenu:
     description: 音楽メニューを開く、または楽曲を操作する
     aliases: [mm]
-    usage: /musicmenu [play|open] <ID>、/musicmenu import <ファイル名.oyasai>、または /musicmenu paste …
+    usage: /musicmenu [play|open] <ID>、/musicmenu import <ファイル名.oyasai>、または /musicmenu paste
     permission: oyasaimusic.use
   getmusicplayer:
     description: 物理アイテム「音楽プレイヤー」を取得する（GUIフェーズで追加）
@@ -53,7 +53,7 @@ permissions:
     description: 看板用バニラ音源を試聴する
     default: false
   oyasaimusic.import:
-    description: OMMTの.oyasaiファイルまたは検証付きコピペデータを非公開の下書きとしてインポートする
+    description: OMMTの.oyasaiファイルまたはPaperダイアログの検証付きコピペデータを非公開の下書きとしてインポートする
     default: false
   oyasaimusic.newsong.notify:
     description: 新曲公開のチャット通知と効果音を受け取る
