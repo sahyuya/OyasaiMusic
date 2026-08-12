@@ -16,9 +16,14 @@ export function encodeOyasaiPackage({ midi, conversion, parts, settings, title }
     createdByVersion: "0.2.0",
     song: {
       title: String(title || midi.title || "無題の楽曲").trim().slice(0, 120) || "無題の楽曲",
-      displayBpm: Math.max(1, Math.min(999, Math.round(midi.tempos[0]?.bpm || 120))),
+      displayBpm: Math.max(1, Math.min(60_000, Math.round(midi.tempos[0]?.bpm || 120))),
       durationMs: conversion.metrics.durationMs,
       tempoMapPreserved: true,
+      tempoMap: (midi.tempos || []).map((tempo) => ({
+        timeMs: Math.max(0, Math.round(tempo.timeMs || 0)),
+        tick: Math.max(0, Math.round(tempo.tick || 0)),
+        bpm: Math.max(1, Math.min(60_000, Math.round(tempo.bpm || 120))),
+      })),
     },
     source: {
       fileName: midi.sourceName,

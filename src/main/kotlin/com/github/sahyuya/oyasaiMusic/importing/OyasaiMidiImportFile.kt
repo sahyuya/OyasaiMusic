@@ -4,8 +4,10 @@ import com.google.gson.JsonParser
 import com.github.sahyuya.oyasaiMusic.audio.InstrumentMapper
 import com.github.sahyuya.oyasaiMusic.model.NoteEvent
 import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.io.File
+import java.io.InputStream
 import org.bukkit.Instrument
 
 /** OMMTが生成する、バージョンに依存しない楽器IDを持つ`.oyasai`ファイルを読み込む。 */
@@ -27,8 +29,16 @@ object OyasaiMidiImportFile {
   fun read(file: File): ImportedSong {
     require(file.isFile) { "インポートファイルが見つかりません: ${file.name}" }
     require(file.length() >= HEADER_SIZE) { "インポートファイルのヘッダーが不足しています。" }
+    return read(file.inputStream(), file.length())
+  }
 
-    DataInputStream(BufferedInputStream(file.inputStream())).use { input ->
+  fun read(bytes: ByteArray): ImportedSong {
+    require(bytes.size.toLong() >= HEADER_SIZE) { "インポートデータのヘッダーが不足しています。" }
+    return read(ByteArrayInputStream(bytes), bytes.size.toLong())
+  }
+
+  private fun read(source: InputStream, sourceLength: Long): ImportedSong {
+    DataInputStream(BufferedInputStream(source)).use { input ->
       require(input.readInt() == MAGIC) { "OMMTの.oyasaiファイルではありません。" }
       val version = input.readUnsignedShort()
       require(version == VERSION) { "未対応の.oyasaiバージョンです: $version" }
@@ -43,7 +53,7 @@ object OyasaiMidiImportFile {
         "現在のOyasaiMusic音源で読み込めるノート数（$MAX_EXISTING_OYMB_NOTES）を超えています。"
       }
       val expectedLength = HEADER_SIZE + metadataLength + noteCount * NOTE_SIZE
-      require(file.length() == expectedLength) { "ファイル長とヘッダー情報が一致しません。" }
+      require(sourceLength == expectedLength) { "データ長とヘッダー情報が一致しません。" }
 
       val metadataBytes = input.readNBytes(metadataLength.toInt())
       require(metadataBytes.size == metadataLength.toInt()) { "メタデータが途中で切れています。" }
@@ -71,7 +81,7 @@ object OyasaiMidiImportFile {
       val bpm =
           runCatching { songMetadata?.get("displayBpm")?.asInt }
               .getOrNull()
-              ?.coerceIn(1, 999)
+              ?.coerceIn(1, 60_000)
               ?: 120
 
       val notes = ArrayList<NoteEvent>(noteCount.toInt())

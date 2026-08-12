@@ -32,6 +32,7 @@ import com.github.sahyuya.oyasaiMusic.gui.ToastNotificationService
 import com.github.sahyuya.oyasaiMusic.item.PhysicalMusicPlayerItem
 import com.github.sahyuya.oyasaiMusic.item.PhysicalRecordListener
 import com.github.sahyuya.oyasaiMusic.importing.OyasaiImportService
+import com.github.sahyuya.oyasaiMusic.importing.OyasaiPasteTransferService
 import com.github.sahyuya.oyasaiMusic.model.Song
 import java.io.File
 import org.bukkit.Bukkit
@@ -110,6 +111,9 @@ class OyasaiMusic : JavaPlugin() {
   lateinit var oyasaiImportService: OyasaiImportService
     private set
 
+  lateinit var oyasaiPasteTransferService: OyasaiPasteTransferService
+    private set
+
   override fun onEnable() {
     // --- FAWE必須依存チェック（plugin.ymlのdependでも保証されるが、明示的なメッセージを出すため二重チェック） ---
     if (server.pluginManager.getPlugin("FastAsyncWorldEdit") == null) {
@@ -142,6 +146,7 @@ class OyasaiMusic : JavaPlugin() {
     playbackModeService = PlaybackModeService(playbackPreferenceRepository)
     rankingRepository = RankingRepository(databaseManager)
     oyasaiImportService = OyasaiImportService(this)
+    oyasaiPasteTransferService = OyasaiPasteTransferService()
 
     // --- サービス層 ---
     configureRuntimeServices()

@@ -8,14 +8,23 @@ import {
   recommendGlobalTranspose,
   splitSelectionIntoPart,
 } from "./converter.js";
-import { NOTE_BLOCK_INSTRUMENTS, midiNoteName } from "./instruments.js";
-import { buildRulerGrid, buildTimeGrid, nearestGridTime } from "./grid.js";
+import { NOTE_BLOCK_INSTRUMENTS } from "./instruments.js";
+import { buildRulerGrid, buildTimeGrid } from "./grid.js";
 import { mergeMidiDocuments } from "./midi-merge.js";
 import { encodeOyasaiPackage, downloadBlob } from "./oyasai-format.js";
+import { encodePasteCommands } from "./paste-format.js";
 import { encodeSpongeSchematic, planGridSchematic } from "./schematic.js";
 import { PianoRoll } from "./piano-roll.js";
 import { AUTOMATION_LANES, AutomationLane } from "./automation-lane.js";
 import { clearLatestSession, loadLatestSession, saveLatestSession } from "./session-store.js";
+import {
+  canonicalizeTempoMap,
+  normalizeBpm,
+  rebuildTempoMap,
+  retimeForTempoChange,
+  tempoAtTime,
+  timeToTempoTick,
+} from "./tempo-map.js";
 
 const workspace = document.querySelector("#workspace");
 const state = {
@@ -30,7 +39,8 @@ const state = {
   automationRoll: null,
   automation: {},
   automationLane: "velocity",
-  automationLaneHeight: 170,
+  rollHeight: 480,
+  followPlayhead: false,
   view: { startMs: 0, endMs: 1000, minPitch: 36, maxPitch: 84 },
   sourcePitchRange: { min: 36, max: 84 },
   editorMode: "all",
@@ -57,6 +67,7 @@ const preview = new PreviewPlayer({
     if (progress) progress.value = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
     if (time) time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
     if (seek && !seek.matches(":active")) seek.value = state.previewPositionMs;
+    followPlayheadIfNeeded(previewSourceTime());
     state.roll?.setPlayhead(previewSourceTime());
     updateArrangeTransport();
   },
@@ -67,6 +78,8 @@ const preview = new PreviewPlayer({
   },
 });
 const keyboardPreview = new PreviewPlayer();
+
+document.addEventListener("fullscreenchange", updateFullscreenButton);
 
 boot();
 
@@ -288,6 +301,7 @@ function addParsedMidis(midis, mergeMode) {
     warnings: sumWarnings(state.midi.warnings, addedMidi.warnings),
     sources: [...(state.midi.sources || [{ fileName: state.midi.sourceName }]), ...(addedMidi.sources || [])],
   };
+  state.midi.tempos = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
   state.parts = [...state.parts, ...addedParts];
   state.assignments = rows.map((row) => row.partId);
   state.selectedIds = new Set();
@@ -306,6 +320,7 @@ function restoreSession(snapshot, notify = true) {
     return;
   }
   state.midi = snapshot.midi;
+  state.midi.tempos = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
   state.parts = snapshot.parts || [];
   state.assignments = snapshot.assignments || [];
   state.selectedIds = new Set((snapshot.selectedIds || []).filter((id) => state.midi.notes[id]));
@@ -322,7 +337,8 @@ function restoreSession(snapshot, notify = true) {
   state.previewPositionMs = clampNumber(snapshot.previewPositionMs, 0, state.midi.durationMs, 0);
   state.automation = snapshot.automation && typeof snapshot.automation === "object" ? snapshot.automation : {};
   state.automationLane = AUTOMATION_LANES[snapshot.automationLane] ? snapshot.automationLane : "velocity";
-  state.automationLaneHeight = clampNumber(snapshot.automationLaneHeight, 110, 320, 170);
+  state.rollHeight = clampNumber(snapshot.rollHeight, 280, 900, 480);
+  state.followPlayhead = snapshot.followPlayhead === true;
   state.sessionSavingEnabled = true;
   state.suspendedSession = null;
   updateSourcePitchRange();
@@ -351,7 +367,8 @@ function createSessionSnapshot() {
     previewPositionMs: state.previewPositionMs,
     automation: state.automation,
     automationLane: state.automationLane,
-    automationLaneHeight: state.automationLaneHeight,
+    rollHeight: state.rollHeight,
+    followPlayhead: state.followPlayhead,
   };
 }
 
@@ -389,6 +406,7 @@ function sumWarnings(first = {}, second = {}) {
 
 function initializeEditor(midi) {
   state.midi = midi;
+  state.midi.tempos = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
   state.suspendedSession = null;
   const initial = createInitialParts(midi);
   state.parts = initial.parts;
@@ -405,7 +423,8 @@ function initializeEditor(midi) {
   state.previewPositionMs = 0;
   state.automation = {};
   state.automationLane = "velocity";
-  state.automationLaneHeight = 170;
+  state.rollHeight = 480;
+  state.followPlayhead = false;
   state.sessionSavingEnabled = true;
   let minPitch = 127;
   let maxPitch = 0;
@@ -463,7 +482,7 @@ function renderEditor() {
         ${summaryStat("ノート", formatNumber(midi.notes.length))}
         ${summaryStat("元トラック", formatNumber(midi.tracks.length))}
         ${summaryStat("結合MIDI", formatNumber(midi.sources?.length || 1))}
-        ${summaryStat("テンポ", `${formatDecimal(midi.tempos[0]?.bpm || 120)} BPM`)}
+        ${summaryStat("テンポ", `<span id="summary-tempo-value">${formatDecimal(midi.tempos[0]?.bpm || 120)} BPM${midi.tempos.length > 1 ? ` · ${formatNumber(midi.tempos.length)}区間` : ""}</span>`)}
       </div>
       <div class="file-actions">
         <label>追加方法<select id="merge-mode"><option value="overlay">同じ開始位置へ重ねる</option><option value="append">曲の末尾へ連結</option></select></label>
@@ -476,35 +495,35 @@ function renderEditor() {
     </section>
 
     <nav class="stage-nav" aria-label="編集工程">
-      <a href="#arrange"><b>01</b><span>音を選ぶ</span></a>
-      <a href="#parts"><b>02</b><span>パートを整える</span></a>
-      <a href="#export"><b>03</b><span>変換・出力</span></a>
+      <a href="#arrange"><b>01</b><span>編集・パート調整</span></a>
+      <a href="#export"><b>02</b><span>変換・出力</span></a>
     </nav>
 
     <section id="arrange" class="editor-section">
       <div class="section-heading">
         <div><span class="step-label">01 · ARRANGE</span><h2>MIDIを演奏しながら整える</h2></div>
-        <p>上の小節ルーラーをクリックして再生。中央は縦スクロール、ルーラーは横スクロール、Ctrl / Shift＋ホイールで拡大できます。</p>
+        <p>ノートを選び、右クリックからパート移動・移調・打楽器・ミュートを編集できます。Ctrl＋ドラッグで表示範囲を自由移動します。</p>
       </div>
       <div class="editor-modebar" role="group" aria-label="パート表示モード">
         <button type="button" data-editor-mode="all" class="mode-button ${state.editorMode === "all" ? "is-active" : ""}">全パートを重ねて編集</button>
         <button type="button" data-editor-mode="part" class="mode-button ${state.editorMode === "part" ? "is-active" : ""}">パートごとに編集</button>
         <span>${state.editorMode === "all" ? "すべてのパートを同じグリッドへ表示しています" : "選択したパートのノートだけを表示しています"}</span>
       </div>
-      <div id="part-editor-tabs" class="part-editor-tabs" ${state.editorMode === "part" ? "" : "hidden"}>${partEditorTabs()}</div>
-      <div id="daw-workspace" class="piano-panel daw-workspace" tabindex="0" aria-label="MIDI編集ワークスペース">
+      <div id="daw-workspace" class="piano-panel daw-workspace" tabindex="0" aria-label="MIDI編集ワークスペース" style="--roll-height:${state.rollHeight}px">
         <header class="daw-commandbar">
           <div class="track-strip">
             <span class="track-color" style="--track-color:${escapeAttribute(activePart()?.color || "#7b8b6b")}"></span>
-            <span class="track-number">01</span>
             <label><span>編集パート</span><select id="automation-part">${partControlOptions()}</select></label>
+            <div id="active-part-controls" class="active-part-controls">${activePartControls()}</div>
+            <span class="selection-readout"><b id="selected-count">0</b>音選択</span>
           </div>
           <div class="arrange-transport" aria-label="試聴操作">
             <button type="button" id="transport-start" class="transport-button" title="先頭へ移動 (Home)" aria-label="先頭へ移動">|◀</button>
             <button type="button" id="transport-play" class="transport-button is-primary" title="再生・一時停止 (Space)" aria-label="再生">▶</button>
             <button type="button" id="transport-stop" class="transport-button" title="停止 (Escape)" aria-label="停止">■</button>
             <output id="transport-time" class="transport-time">${formatTimeDetailed(state.previewPositionMs)}</output>
-            <span class="transport-bpm"><small>BPM</small><b>${formatDecimal(midi.tempos[0]?.bpm || 120)}</b></span>
+            <label class="transport-bpm"><small>BPM</small><input id="transport-bpm-input" type="number" min="1" max="60000" step="1" value="${Math.round(tempoAtTime(midi.tempos, state.previewPositionMs, midi.ppq).bpm)}" aria-label="現在位置のBPM" /></label>
+            <button type="button" id="tempo-map-button" class="transport-button wide" title="途中のBPM変更を編集">TEMPO</button>
           </div>
           <div class="edit-tools">
             <button type="button" id="snap-button" class="tool-button ${state.snapToGrid ? "is-active" : ""}" title="グリッド吸着を切り替え (S)" aria-pressed="${state.snapToGrid}">⌁ <span>SNAP</span></button>
@@ -516,87 +535,47 @@ function renderEditor() {
             </select></label>
             <button type="button" id="fit-width" class="tool-button" title="曲全体を横表示 (W)">↔ <span>FIT</span></button>
             <button type="button" id="fit-height" class="tool-button" title="全音域を縦表示 (H)">↕ <span>FIT</span></button>
+            <button type="button" id="follow-playhead" class="tool-button ${state.followPlayhead ? "is-active" : ""}" title="再生位置を中央へ追従" aria-pressed="${state.followPlayhead}">◎ <span>FOLLOW</span></button>
+            <button type="button" id="fullscreen-editor" class="tool-button" title="編集画面を全画面表示">⛶ <span>FULL</span></button>
           </div>
         </header>
         <div class="roll-viewport">
           <canvas id="piano-roll" class="piano-roll" height="480" aria-label="鍵盤付きMIDIピアノロール。小節ルーラーをクリックするとその位置から再生します"></canvas>
           <input id="roll-vscroll" class="roll-vscroll" type="range" min="0" max="127" step="1" value="${Math.round((state.view.minPitch + state.view.maxPitch) / 2)}" aria-label="ピアノロールの縦位置" />
         </div>
-        <div class="automation-header">
-          <div class="automation-tabs" role="tablist" aria-label="MIDIコントロールレーン">${automationLaneTabs()}</div>
-          <span id="automation-target">${escapeHtml(activePart()?.name || "パートなし")}へ適用 · Ctrl＋クリックで制御点追加 · 右クリックで削除</span>
-        </div>
-        <div id="automation-splitter" class="automation-splitter" title="ドラッグしてコントロールレーンの高さを変更"></div>
-        <canvas id="automation-canvas" class="automation-canvas" height="${state.automationLaneHeight}" style="height:${state.automationLaneHeight}px" aria-label="MIDIコントロールレーン。Ctrlを押しながらクリックすると制御点を追加できます"></canvas>
+        <div id="automation-splitter" class="automation-splitter" title="ドラッグして上側のノート領域の高さを変更"></div>
         <div class="roll-horizontal-bar">
           <span aria-hidden="true">◀</span>
           <input id="roll-hscroll" type="range" min="0" max="1000" step="1" value="${horizontalScrollValue()}" aria-label="ピアノロールの横位置" />
           <span aria-hidden="true">▶</span>
         </div>
+        <div class="automation-header">
+          <div class="automation-tabs" role="tablist" aria-label="MIDIコントロールレーン">${automationLaneTabs()}</div>
+          <span id="automation-target">${escapeHtml(activePart()?.name || "パートなし")}へ適用 · Ctrl＋クリックで制御点追加 · 右クリックで削除</span>
+        </div>
+        <canvas id="automation-canvas" class="automation-canvas" height="170" style="height:170px" aria-label="MIDIコントロールレーン。Ctrlを押しながらクリックすると制御点を追加できます"></canvas>
         <footer class="daw-shortcuts">
-          <span><kbd>Space</kbd> 再生 / 停止</span><span><kbd>Wheel</kbd> 縦移動</span><span><kbd>Ctrl</kbd>＋<kbd>Wheel</kbd> 横拡大</span><span><kbd>Shift</kbd>＋<kbd>Wheel</kbd> 縦拡大</span><span><kbd>Middle Drag</kbd> 自由移動</span><span class="fsharp-key">F♯ Minecraft境界</span>
+          <span><kbd>Space</kbd> 再生 / 停止</span><span><kbd>Wheel</kbd> 縦移動</span><span><kbd>Ctrl</kbd>＋<kbd>Wheel</kbd> 横拡大</span><span><kbd>Shift</kbd>＋<kbd>Wheel</kbd> 縦拡大</span><span><kbd>Ctrl</kbd>＋<kbd>Drag</kbd> 自由移動</span><span><kbd>Right Click</kbd> 選択音を編集</span><span class="fsharp-key">F♯ Minecraft境界</span>
         </footer>
+        <div id="note-context-menu" class="note-context-menu" role="menu" hidden>
+          <header><b><span id="context-selection-count">0</span>音を編集</b><button type="button" data-context-action="close" aria-label="閉じる">×</button></header>
+          <details open><summary>パートへ移動</summary><div id="context-part-list" class="context-action-list"></div><button type="button" data-context-action="new-part">＋ 新しいパート…</button></details>
+          <details><summary>選択ノートを移調</summary><div class="context-action-grid"><button type="button" data-context-transpose="-12">−12</button><button type="button" data-context-transpose="-1">−1</button><button type="button" data-context-transpose="1">＋1</button><button type="button" data-context-transpose="12">＋12</button></div></details>
+          <details><summary>所属パートの設定</summary><div class="context-action-grid"><button type="button" data-context-action="percussion-on">打楽器 ON</button><button type="button" data-context-action="percussion-off">打楽器 OFF</button><button type="button" data-context-action="mute-on">ミュート</button><button type="button" data-context-action="mute-off">解除</button></div></details>
+          <button type="button" class="context-danger" data-context-action="delete">選択ノートを削除</button>
+        </div>
+        <dialog id="new-part-dialog" class="editor-dialog">
+          <form method="dialog"><header><h3>新しいパートへ移動</h3><button value="cancel" aria-label="閉じる">×</button></header><label>パート名<input id="dialog-part-name" type="text" maxlength="80" value="新しいパート" /></label><label>音ブロック楽器<select id="dialog-part-instrument">${instrumentOptions("piano")}</select></label><div class="dialog-actions"><button value="cancel" class="secondary-button">キャンセル</button><button type="button" id="confirm-new-part" class="primary-button">選択音を移動</button></div></form>
+        </dialog>
+        <dialog id="tempo-dialog" class="editor-dialog tempo-dialog">
+          <form method="dialog"><header><div><small>TEMPO MAP</small><h3>途中のBPM変更</h3></div><button value="cancel" aria-label="閉じる">×</button></header><p>テンポ位置は小節上の位置を維持したまま、ノートとオートメーションを再配置します。</p><div id="tempo-event-list" class="tempo-event-list">${tempoEventRows()}</div><div class="dialog-actions"><button type="button" id="add-tempo-event" class="secondary-button">現在の再生位置へ追加</button><button value="cancel" class="primary-button">完了</button></div></form>
+        </dialog>
       </div>
-
-      <div class="selection-grid">
-        <section class="selection-card">
-          <div class="card-heading"><h3>条件で選択</h3><span>時刻と音域を組み合わせられます</span></div>
-          <div class="range-form">
-            <label>開始秒<input id="select-start" type="number" min="0" step="0.1" value="${round(state.view.startMs / 1000, 2)}" /></label>
-            <label>終了秒<input id="select-end" type="number" min="0" step="0.1" value="${round(state.view.endMs / 1000, 2)}" /></label>
-            <label>最低音<input id="select-min-pitch" type="number" min="0" max="127" value="${state.view.minPitch}" /></label>
-            <label>最高音<input id="select-max-pitch" type="number" min="0" max="127" value="${state.view.maxPitch}" /></label>
-          </div>
-          <div class="button-row">
-            <button type="button" id="select-range" class="primary-button small">条件内を選択</button>
-            <button type="button" id="add-range" class="secondary-button small">選択へ追加</button>
-            <button type="button" id="clear-selection" class="text-button">解除</button>
-          </div>
-        </section>
-        <section class="selection-card selected-card">
-          <div class="selected-count"><strong id="selected-count">0</strong><span>ノート選択中</span></div>
-          <p id="selected-detail">ピアノロールまたは条件を使って音を選んでください。</p>
-          <div class="existing-part-form">
-            <label>既存パートへ移動<select id="existing-part-target" aria-label="選択ノートの移動先パート">${partDestinationOptions()}</select></label>
-            <button type="button" id="move-to-existing-part" class="secondary-button" disabled>選択音を移動</button>
-          </div>
-          <div class="part-action-divider"><span>または新しいパートを作成</span></div>
-          <div class="new-part-form">
-            <label>新しいパート名<input id="new-part-name" type="text" maxlength="80" value="新しいパート" /></label>
-            <label>楽器<select id="new-part-instrument">${instrumentOptions("piano")}</select></label>
-          </div>
-          <button type="button" id="create-part" class="primary-button" disabled>選択音を新しいパートへ分ける</button>
-        </section>
-        <section class="selection-card note-edit-card">
-          <div class="card-heading"><h3>選択ノートを編集</h3><span>現在の時間グリッド単位で移動できます</span></div>
-          <div class="range-form compact-grid">
-            <label>時間移動<input id="note-shift-grid" type="number" min="-256" max="256" step="1" value="0" /> マス</label>
-            <label>音程移動<input id="note-shift-pitch" type="number" min="-127" max="127" step="1" value="0" /> 半音</label>
-          </div>
-          <div id="single-note-editor" class="single-note-editor" hidden>
-            <label>開始位置<input id="single-note-time" type="number" min="0" step="1" /> ms</label>
-            <label>MIDI音程<input id="single-note-pitch" type="number" min="0" max="127" step="1" /></label>
-            <button type="button" id="apply-single-note" class="compact-button">1音へ正確に適用</button>
-          </div>
-          <div class="button-row">
-            <button type="button" id="apply-note-shift" class="secondary-button small" disabled>移動を適用</button>
-            <button type="button" id="delete-notes" class="text-button danger-text" disabled>選択音を削除</button>
-          </div>
-        </section>
-      </div>
-    </section>
-
-    <section id="parts" class="editor-section">
-      <div class="section-heading">
-        <div><span class="step-label">02 · PARTS</span><h2>出力パートを整える</h2></div>
-        <p>MIDIの元トラックに関係なく、各ノートはここで指定した音ブロック楽器へ変換されます。</p>
-      </div>
-      <div id="part-list" class="part-list"></div>
     </section>
 
     <section id="export" class="editor-section export-section">
       <div class="section-heading">
-        <div><span class="step-label">03 · TRANSLATE</span><h2>音ブロックへ変換する</h2></div>
+        <div><span class="step-label">02 · TRANSLATE</span><h2>音ブロックへ変換する</h2></div>
         <p>出力後の曲名や参考URL、公開設定はMinecraft内のOyasaiMusicで変更できます。</p>
       </div>
       <div class="export-grid">
@@ -626,6 +605,14 @@ function renderEditor() {
             </div>
           </div>
           <button type="button" id="download-button" class="download-button">.oyasai をダウンロード <span>↓</span></button>
+          <div class="paste-export">
+            <button type="button" id="generate-paste" class="secondary-button">サーバーへコピペするデータを作る</button>
+            <p id="paste-status">専用コマンド列へ圧縮し、チェックサムで改変を検出します。</p>
+            <div id="paste-output" hidden>
+              <textarea id="paste-commands" readonly spellcheck="false" aria-label="Minecraftへ貼り付けるコマンド列"></textarea>
+              <div class="button-row"><button type="button" id="copy-paste-commands" class="primary-button small">すべてコピー</button><span>上から1行ずつMinecraftのチャットへ貼り付けます</span></div>
+            </div>
+          </div>
         </section>
       </div>
 
@@ -653,10 +640,15 @@ function renderEditor() {
       <details class="minecraft-steps">
         <summary>Minecraftへ取り込む手順</summary>
         <div class="minecraft-methods">
-          <div><h4>.oyasaiから登録</h4><ol>
+          <div><h4>コピペで直接登録（推奨）</h4><ol>
+            <li>「サーバーへコピペするデータを作る」から全行をコピーします。</li>
+            <li>上から順に、各行をMinecraftのチャットへ1行ずつ貼り付けます。</li>
+            <li>曲名、参考URL、公開状態をゲーム内で設定します。</li>
+          </ol></div>
+          <div><h4>.oyasaiファイルから登録</h4><ol>
             <li>ファイルを<code>plugins/OyasaiMusic/import</code>へ入れます。</li>
             <li><code>/mm import &lt;ファイル名&gt;</code>を実行します。</li>
-            <li>曲名、参考URL、公開状態をゲーム内で設定します。</li>
+            <li>従来のサーバーファイル方式も引き続き利用できます。</li>
           </ol></div>
           <div><h4>FAWE .schemから録音</h4><ol>
             <li>ファイルをサーバーで設定されたFAWEのschematicフォルダーへ入れます。</li>
@@ -669,7 +661,6 @@ function renderEditor() {
   `;
 
   bindEditorEvents(recommendedTranspose);
-  renderParts();
   renderConversion();
   updateSelectionUi();
   initializeRoll();
@@ -697,7 +688,7 @@ function bindEditorEvents(recommendedTranspose) {
   document.querySelectorAll("[data-editor-mode]").forEach((button) => {
     button.addEventListener("click", () => setEditorMode(button.dataset.editorMode));
   });
-  bindPartEditorTabs();
+  bindActivePartControls();
   document.querySelector("#grid-subdivision").addEventListener("change", (event) => {
     state.gridSubdivision = Number(event.target.value);
     refreshRoll();
@@ -709,8 +700,17 @@ function bindEditorEvents(recommendedTranspose) {
   document.querySelector("#transport-start").addEventListener("click", () => seekAndMaybePlay(0, false));
   document.querySelector("#transport-play").addEventListener("click", togglePreview);
   document.querySelector("#transport-stop").addEventListener("click", stopPreview);
+  document.querySelector("#transport-bpm-input").addEventListener("change", changeCurrentTempo);
+  document.querySelector("#tempo-map-button").addEventListener("click", openTempoDialog);
+  document.querySelector("#add-tempo-event").addEventListener("click", addTempoEventAtPlayhead);
+  document.querySelector("#tempo-event-list").addEventListener("change", handleTempoListChange);
+  document.querySelector("#tempo-event-list").addEventListener("click", handleTempoListClick);
+  document.querySelector("#follow-playhead").addEventListener("click", toggleFollowPlayhead);
+  document.querySelector("#fullscreen-editor").addEventListener("click", toggleEditorFullscreen);
   document.querySelector("#automation-part").addEventListener("change", (event) => {
+    preview.stop();
     state.activePartId = event.target.value;
+    refreshActivePartControls();
     refreshRoll();
     refreshAutomationLane();
     updateAutomationTarget();
@@ -728,16 +728,7 @@ function bindEditorEvents(recommendedTranspose) {
   document.querySelector("#roll-hscroll").addEventListener("input", (event) => setHorizontalScroll(Number(event.target.value)));
   bindAutomationSplitter();
   bindDawShortcuts();
-  document.querySelector("#select-range").addEventListener("click", () => selectByInputs(false));
-  document.querySelector("#add-range").addEventListener("click", () => selectByInputs(true));
-  document.querySelector("#clear-selection").addEventListener("click", () => setSelection(new Set()));
-  document.querySelector("#create-part").addEventListener("click", createPartFromSelection);
-  document.querySelector("#move-to-existing-part").addEventListener("click", () => {
-    moveSelectedNotesToPart(document.querySelector("#existing-part-target").value);
-  });
-  document.querySelector("#apply-note-shift").addEventListener("click", applySelectedNoteShift);
-  document.querySelector("#apply-single-note").addEventListener("click", applySingleNoteEdit);
-  document.querySelector("#delete-notes").addEventListener("click", deleteSelectedNotes);
+  bindNoteContextMenu();
   document.querySelector("#song-title").addEventListener("input", (event) => {
     state.title = event.target.value;
     scheduleSessionSave();
@@ -771,10 +762,13 @@ function bindEditorEvents(recommendedTranspose) {
   seek.addEventListener("input", (event) => setPreviewPosition(Number(event.target.value)));
   seek.addEventListener("change", async (event) => {
     setPreviewPosition(Number(event.target.value));
-    if (preview.playing) await preview.play(state.conversion.notes, state.previewPositionMs);
+    if (preview.playing) await preview.play(previewNotes(), state.previewPositionMs);
   });
   document.querySelector("#download-button").addEventListener("click", downloadPackage);
+  document.querySelector("#generate-paste").addEventListener("click", generatePasteTransfer);
+  document.querySelector("#copy-paste-commands").addEventListener("click", copyPasteCommands);
   document.querySelector("#schematic-download").addEventListener("click", downloadSchematic);
+  updateFullscreenButton();
 }
 
 function initializeRoll() {
@@ -784,6 +778,7 @@ function initializeRoll() {
     onSeek: (timeMs, options) => seekAndMaybePlay(timeMs, options.play),
     onNavigate: navigateRoll,
     onKeyboardPreview: previewPianoKey,
+    onContextMenu: openNoteContextMenu,
     getSelected: () => state.selectedIds,
     getColor(noteId) {
       const part = state.parts.find((candidate) => candidate.id === state.assignments[noteId]);
@@ -998,15 +993,16 @@ function syncRollScrollbars() {
 
 function bindAutomationSplitter() {
   const splitter = document.querySelector("#automation-splitter");
-  const canvas = document.querySelector("#automation-canvas");
+  const editor = document.querySelector("#daw-workspace");
   splitter.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     const startY = event.clientY;
-    const startHeight = state.automationLaneHeight;
+    const startHeight = state.rollHeight;
+    splitter.setPointerCapture?.(event.pointerId);
     const move = (moveEvent) => {
-      state.automationLaneHeight = Math.round(Math.max(110, Math.min(320, startHeight + moveEvent.clientY - startY)));
-      canvas.style.height = `${state.automationLaneHeight}px`;
-      state.automationRoll?.draw();
+      state.rollHeight = Math.round(Math.max(280, Math.min(900, startHeight + moveEvent.clientY - startY)));
+      editor.style.setProperty("--roll-height", `${state.rollHeight}px`);
+      state.roll?.draw();
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -1041,11 +1037,10 @@ function bindDawShortcuts() {
     } else if ((event.key === "Delete" || event.key === "Backspace") && state.selectedIds.size > 0) {
       event.preventDefault();
       deleteSelectedNotes();
-    } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) && state.selectedIds.size > 0) {
+    } else if (["ArrowUp", "ArrowDown"].includes(event.key) && state.selectedIds.size > 0) {
       event.preventDefault();
       const pitch = event.key === "ArrowUp" ? (event.shiftKey ? 12 : 1) : event.key === "ArrowDown" ? (event.shiftKey ? -12 : -1) : 0;
-      const time = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-      shiftSelectedNotes(time, pitch);
+      transposeSelectedNotes(pitch);
     } else if (key === "s" && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       toggleSnap();
@@ -1078,30 +1073,6 @@ function setEditorMode(mode) {
   scheduleSessionSave();
 }
 
-function setActivePart(partId) {
-  if (!state.parts.some((part) => part.id === partId)) return;
-  state.activePartId = partId;
-  state.editorMode = "part";
-  state.selectedIds = new Set();
-  renderEditor();
-  scheduleSessionSave();
-}
-
-function bindPartEditorTabs() {
-  document.querySelectorAll("[data-edit-part]").forEach((button) => {
-    button.addEventListener("click", () => setActivePart(button.dataset.editPart));
-  });
-}
-
-function renderPartTabs() {
-  const tabs = document.querySelector("#part-editor-tabs");
-  if (!tabs) return;
-  tabs.hidden = state.editorMode !== "part";
-  tabs.innerHTML = partEditorTabs();
-  bindPartEditorTabs();
-  updateAutomationPartControl();
-}
-
 function updateAutomationPartControl() {
   const control = document.querySelector("#automation-part");
   if (!control) return;
@@ -1110,34 +1081,275 @@ function updateAutomationPartControl() {
   updateAutomationTarget();
 }
 
-function selectByInputs(additive) {
-  let startMs = clampNumber(document.querySelector("#select-start").value, 0, Number.MAX_SAFE_INTEGER, 0) * 1000;
-  let endMs = clampNumber(document.querySelector("#select-end").value, 0, Number.MAX_SAFE_INTEGER, state.midi.durationMs / 1000) * 1000;
-  const minPitch = clampNumber(document.querySelector("#select-min-pitch").value, 0, 127, 0);
-  const maxPitch = clampNumber(document.querySelector("#select-max-pitch").value, 0, 127, 127);
-  if (state.snapToGrid) {
-    const grid = buildTimeGrid({
-      tempos: state.midi.tempos,
-      ppq: state.midi.ppq,
-      startMs: Math.max(0, Math.min(startMs, endMs) - gridStepMsAt(Math.min(startMs, endMs))),
-      endMs: Math.max(startMs, endMs) + gridStepMsAt(Math.max(startMs, endMs)),
-      subdivision: state.gridSubdivision,
-    });
-    startMs = nearestGridTime(startMs, grid);
-    endMs = nearestGridTime(endMs, grid);
-    document.querySelector("#select-start").value = round(startMs / 1000, 3);
-    document.querySelector("#select-end").value = round(endMs / 1000, 3);
-  }
-  const next = additive ? new Set(state.selectedIds) : new Set();
-  for (const note of editableNotes()) {
-    if (note.startMs >= Math.min(startMs, endMs)
-      && note.startMs <= Math.max(startMs, endMs)
-      && note.midi >= Math.min(minPitch, maxPitch)
-      && note.midi <= Math.max(minPitch, maxPitch)) {
-      next.add(note.id);
+function activePartControls() {
+  const part = activePart();
+  if (!part) return '<span class="active-part-empty">編集できるパートがありません</span>';
+  return `
+    <label class="compact-field name"><span>名前</span><input data-action="name" type="text" maxlength="80" value="${escapeAttribute(part.name)}" /></label>
+    <label class="compact-field instrument"><span>楽器</span><select data-action="instrument">${instrumentOptions(part.instrumentKey)}</select></label>
+    <label class="compact-field number"><span>移調</span><input data-action="transpose" type="number" min="-48" max="48" value="${part.transpose}" /></label>
+    <label class="compact-field number"><span>音量</span><input data-action="volume" type="number" min="0" max="200" value="${part.volume}" /></label>
+    <label class="compact-toggle" title="MIDI打楽器番号を音ブロック楽器へ割り当て"><input data-action="percussion" type="checkbox" ${part.percussion ? "checked" : ""} /><span>打楽器</span></label>
+    <label class="compact-toggle"><input data-action="mute" type="checkbox" ${part.muted ? "checked" : ""} /><span>ミュート</span></label>
+  `;
+}
+
+function bindActivePartControls() {
+  const controls = document.querySelector("#active-part-controls");
+  const part = activePart();
+  if (!controls || !part) return;
+  controls.querySelectorAll("[data-action]").forEach((control) => {
+    const type = control.dataset.action === "name" ? "input" : "change";
+    control.addEventListener(type, () => updatePart(part.id, control));
+  });
+}
+
+function refreshActivePartControls(rebind = true) {
+  const controls = document.querySelector("#active-part-controls");
+  if (!controls) return;
+  controls.innerHTML = activePartControls();
+  if (rebind) bindActivePartControls();
+}
+
+function bindNoteContextMenu() {
+  const editor = document.querySelector("#daw-workspace");
+  const menu = document.querySelector("#note-context-menu");
+  const dialog = document.querySelector("#new-part-dialog");
+  if (!editor || !menu || !dialog) return;
+  menu.addEventListener("click", (event) => {
+    const partButton = event.target.closest("[data-context-part]");
+    if (partButton) {
+      moveSelectedNotesToPart(partButton.dataset.contextPart);
+      return;
     }
+    const transposeButton = event.target.closest("[data-context-transpose]");
+    if (transposeButton) {
+      closeNoteContextMenu();
+      transposeSelectedNotes(Number(transposeButton.dataset.contextTranspose));
+      return;
+    }
+    const actionButton = event.target.closest("[data-context-action]");
+    if (!actionButton) return;
+    const action = actionButton.dataset.contextAction;
+    if (action === "close") closeNoteContextMenu();
+    else if (action === "new-part") {
+      closeNoteContextMenu();
+      document.querySelector("#dialog-part-name").value = `新しいパート ${state.parts.length + 1}`;
+      dialog.showModal();
+      document.querySelector("#dialog-part-name").focus();
+    } else if (action === "percussion-on") setSelectedPartsProperty("percussion", true);
+    else if (action === "percussion-off") setSelectedPartsProperty("percussion", false);
+    else if (action === "mute-on") setSelectedPartsProperty("muted", true);
+    else if (action === "mute-off") setSelectedPartsProperty("muted", false);
+    else if (action === "delete") {
+      closeNoteContextMenu();
+      deleteSelectedNotes();
+    }
+  });
+  document.querySelector("#confirm-new-part").addEventListener("click", () => {
+    if (state.selectedIds.size === 0) {
+      dialog.close();
+      return;
+    }
+    const name = document.querySelector("#dialog-part-name").value;
+    const instrument = document.querySelector("#dialog-part-instrument").value;
+    dialog.close();
+    createPartFromSelection(name, instrument);
+  });
+  editor.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !event.target.closest("#note-context-menu")) closeNoteContextMenu();
+  });
+}
+
+function openNoteContextMenu({ clientX, clientY }) {
+  if (state.selectedIds.size === 0) return;
+  const editor = document.querySelector("#daw-workspace");
+  const menu = document.querySelector("#note-context-menu");
+  const list = document.querySelector("#context-part-list");
+  if (!editor || !menu || !list) return;
+  const candidates = state.parts.filter((part) => canMoveSelectionToPart(part.id));
+  list.innerHTML = candidates.length
+    ? candidates.map((part) => `<button type="button" data-context-part="${escapeAttribute(part.id)}"><i style="--part-color:${escapeAttribute(part.color)}"></i>${escapeHtml(part.name)}</button>`).join("")
+    : '<span class="context-empty">移動できる別パートはありません</span>';
+  document.querySelector("#context-selection-count").textContent = formatNumber(state.selectedIds.size);
+  const bounds = editor.getBoundingClientRect();
+  menu.hidden = false;
+  menu.style.left = `${Math.max(8, clientX - bounds.left)}px`;
+  menu.style.top = `${Math.max(8, clientY - bounds.top)}px`;
+  requestAnimationFrame(() => {
+    const left = Math.min(editor.clientWidth - menu.offsetWidth - 8, parseFloat(menu.style.left));
+    const top = Math.min(editor.clientHeight - menu.offsetHeight - 8, parseFloat(menu.style.top));
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.max(8, top)}px`;
+  });
+}
+
+function closeNoteContextMenu() {
+  const menu = document.querySelector("#note-context-menu");
+  if (menu) menu.hidden = true;
+}
+
+function setSelectedPartsProperty(property, value) {
+  if (state.selectedIds.size === 0) return;
+  const partIds = new Set([...state.selectedIds].map((id) => state.assignments[id]).filter(Boolean));
+  let changed = 0;
+  for (const part of state.parts) {
+    if (!partIds.has(part.id) || part[property] === value) continue;
+    part[property] = value;
+    changed += 1;
   }
-  setSelection(next);
+  closeNoteContextMenu();
+  if (changed === 0) return;
+  refreshActivePartControls();
+  refreshRoll();
+  scheduleRecalculation();
+  const label = property === "muted" ? (value ? "ミュート" : "ミュート解除") : (value ? "打楽器マップON" : "打楽器マップOFF");
+  showEditorNotice(`選択音が属する${formatNumber(changed)}パートを${label}にしました。`);
+}
+
+function toggleFollowPlayhead() {
+  state.followPlayhead = !state.followPlayhead;
+  const button = document.querySelector("#follow-playhead");
+  button?.classList.toggle("is-active", state.followPlayhead);
+  button?.setAttribute("aria-pressed", String(state.followPlayhead));
+  if (state.followPlayhead) followPlayheadIfNeeded(previewSourceTime(), true);
+  scheduleSessionSave();
+}
+
+function followPlayheadIfNeeded(sourceTimeMs, force = false) {
+  if (!state.followPlayhead || !state.midi || (!preview.playing && !force)) return;
+  const fullDuration = Math.max(1000, state.midi.durationMs);
+  const span = Math.min(fullDuration, Math.max(1, state.view.endMs - state.view.startMs));
+  const center = state.view.startMs + span / 2;
+  if (!force && sourceTimeMs <= center) return;
+  const nextStart = Math.max(0, Math.min(fullDuration - span, sourceTimeMs - span / 2));
+  if (Math.abs(nextStart - state.view.startMs) < 0.5) return;
+  state.view.startMs = nextStart;
+  state.view.endMs = nextStart + span;
+  refreshRoll();
+}
+
+async function toggleEditorFullscreen() {
+  const editor = document.querySelector("#daw-workspace");
+  if (!editor || !document.fullscreenEnabled) {
+    showEditorNotice("このブラウザでは全画面表示を利用できません。", "error");
+    return;
+  }
+  try {
+    if (document.fullscreenElement === editor) await document.exitFullscreen();
+    else await editor.requestFullscreen();
+  } catch {
+    showEditorNotice("全画面表示を開始できませんでした。ブラウザの許可設定を確認してください。", "error");
+  }
+}
+
+function updateFullscreenButton() {
+  const editor = document.querySelector("#daw-workspace");
+  const button = document.querySelector("#fullscreen-editor");
+  if (!editor || !button) return;
+  const active = document.fullscreenElement === editor;
+  button.classList.toggle("is-active", active);
+  button.setAttribute("aria-pressed", String(active));
+  button.querySelector("span").textContent = active ? "EXIT" : "FULL";
+  window.setTimeout(() => {
+    state.roll?.draw();
+    state.automationRoll?.draw();
+  }, 80);
+}
+
+function tempoEventRows() {
+  const events = canonicalizeTempoMap(state.midi?.tempos || [], state.midi?.ppq || 480);
+  return events.map((event, index) => `
+    <div class="tempo-event-row" data-tempo-id="${escapeAttribute(event.id)}">
+      <div><b>${index === 0 ? "曲の先頭" : formatTimeDetailed(event.timeMs)}</b><small>${formatDecimal(event.tick / Math.max(1, state.midi?.ppq || 480))} 拍</small></div>
+      <label><span>BPM</span><input data-tempo-bpm type="number" min="1" max="60000" step="1" value="${Math.round(event.bpm)}" /></label>
+      <button type="button" data-delete-tempo ${index === 0 ? "disabled title=\"先頭テンポは削除できません\"" : ""} aria-label="このテンポ変更を削除">×</button>
+    </div>
+  `).join("");
+}
+
+function renderTempoEventList() {
+  const list = document.querySelector("#tempo-event-list");
+  if (list) list.innerHTML = tempoEventRows();
+}
+
+function openTempoDialog() {
+  renderTempoEventList();
+  document.querySelector("#tempo-dialog")?.showModal();
+}
+
+function changeCurrentTempo(event) {
+  const bpm = normalizeBpm(event.target.value);
+  const map = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
+  const active = tempoAtTime(map, previewSourceTime(), state.midi.ppq);
+  applyTempoEvents(map.map((tempo) => tempo.id === active.id ? { ...tempo, bpm } : tempo), `現在位置のテンポを ${bpm} BPMへ変更しました。`);
+}
+
+function addTempoEventAtPlayhead() {
+  const map = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
+  const timeMs = Math.min(state.midi.durationMs, previewSourceTime());
+  const tick = timeToTempoTick(timeMs, map, state.midi.ppq);
+  if (map.some((event) => Math.abs(event.tick - tick) < 0.01)) {
+    showEditorNotice("現在位置にはすでにテンポ変更があります。", "error");
+    return;
+  }
+  const bpm = tempoAtTime(map, timeMs, state.midi.ppq).bpm;
+  const id = `tempo-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  applyTempoEvents([...map, { id, tick, bpm }], `現在位置へ ${Math.round(bpm)} BPMのテンポ変更を追加しました。`);
+}
+
+function handleTempoListChange(event) {
+  const input = event.target.closest("[data-tempo-bpm]");
+  const row = input?.closest("[data-tempo-id]");
+  if (!input || !row) return;
+  const bpm = normalizeBpm(input.value);
+  const map = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
+  applyTempoEvents(map.map((tempo) => tempo.id === row.dataset.tempoId ? { ...tempo, bpm } : tempo), `テンポを ${bpm} BPMへ変更しました。`);
+}
+
+function handleTempoListClick(event) {
+  const button = event.target.closest("[data-delete-tempo]");
+  const row = button?.closest("[data-tempo-id]");
+  if (!button || !row || button.disabled) return;
+  const map = canonicalizeTempoMap(state.midi.tempos, state.midi.ppq);
+  applyTempoEvents(map.filter((tempo) => tempo.id !== row.dataset.tempoId), "途中のテンポ変更を削除しました。");
+}
+
+function applyTempoEvents(nextTempoEvents, message) {
+  preview.stop();
+  const result = retimeForTempoChange({
+    notes: state.midi.notes,
+    timeSignatures: state.midi.timeSignatures,
+    automation: state.automation,
+    view: state.view,
+    previewPositionMs: previewSourceTime(),
+    oldTempos: state.midi.tempos,
+    nextTempoEvents,
+    ppq: state.midi.ppq,
+  });
+  state.midi = {
+    ...state.midi,
+    notes: result.notes,
+    tempos: result.tempos,
+    timeSignatures: result.timeSignatures,
+    durationMs: result.durationMs,
+  };
+  state.automation = result.automation;
+  state.view = result.view || state.view;
+  updateSourcePitchRange();
+  recalculate(false);
+  state.previewPositionMs = Math.max(0, Math.min(
+    state.conversion.metrics.durationMs,
+    result.previewPositionMs - (state.conversion.metrics.offsetMs || 0),
+  ));
+  renderConversion();
+  refreshRoll();
+  renderTempoEventList();
+  const summary = document.querySelector("#summary-tempo-value");
+  if (summary) summary.textContent = `${formatDecimal(state.midi.tempos[0]?.bpm || 120)} BPM${state.midi.tempos.length > 1 ? ` · ${formatNumber(state.midi.tempos.length)}区間` : ""}`;
+  updateArrangeTransport();
+  scheduleSessionSave();
+  showEditorNotice(message);
 }
 
 function setSelection(selection) {
@@ -1154,62 +1366,27 @@ function updateSelectionUi() {
   const count = document.querySelector("#selected-count");
   if (!count) return;
   count.textContent = formatNumber(state.selectedIds.size);
-  const detail = document.querySelector("#selected-detail");
-  const create = document.querySelector("#create-part");
-  const applyShift = document.querySelector("#apply-note-shift");
-  const deleteNotes = document.querySelector("#delete-notes");
-  const singleEditor = document.querySelector("#single-note-editor");
-  create.disabled = state.selectedIds.size === 0;
-  updatePartDestinationControl();
-  document.querySelectorAll('[data-action="move-selection"]').forEach((button) => {
-    const partId = button.closest("[data-part-id]")?.dataset.partId;
-    button.disabled = !partId || !canMoveSelectionToPart(partId);
-  });
-  if (applyShift) applyShift.disabled = state.selectedIds.size === 0;
-  if (deleteNotes) deleteNotes.disabled = state.selectedIds.size === 0;
-  if (singleEditor) singleEditor.hidden = state.selectedIds.size !== 1;
-  if (state.selectedIds.size === 0) {
-    detail.textContent = "ピアノロールまたは条件を使って音を選んでください。";
-  } else if (state.selectedIds.size === 1) {
-    const note = state.midi.notes[[...state.selectedIds][0]];
-    detail.textContent = `${midiNoteName(note.midi)} · ${formatTime(note.startMs)} · Velocity ${note.velocity}`;
-    document.querySelector("#single-note-time").value = Math.round(note.startMs);
-    document.querySelector("#single-note-pitch").value = note.midi;
-  } else {
-    let min = 127;
-    let max = 0;
-    let first = Number.POSITIVE_INFINITY;
-    let last = 0;
-    for (const id of state.selectedIds) {
-      const note = state.midi.notes[id];
-      min = Math.min(min, note.midi);
-      max = Math.max(max, note.midi);
-      first = Math.min(first, note.startMs);
-      last = Math.max(last, note.startMs);
-    }
-    detail.textContent = `${midiNoteName(min)}〜${midiNoteName(max)} · ${formatTime(first)}〜${formatTime(last)}`;
-  }
+  const menuCount = document.querySelector("#context-selection-count");
+  if (menuCount) menuCount.textContent = formatNumber(state.selectedIds.size);
 }
 
-function createPartFromSelection() {
+function createPartFromSelection(name, instrumentKey) {
   const result = splitSelectionIntoPart({
     parts: state.parts,
     assignments: state.assignments,
     selectedIds: state.selectedIds,
-    name: document.querySelector("#new-part-name").value,
-    instrumentKey: document.querySelector("#new-part-instrument").value,
+    name: String(name || "新しいパート").trim().slice(0, 80) || "新しいパート",
+    instrumentKey: NOTE_BLOCK_INSTRUMENTS.some((instrument) => instrument.key === instrumentKey) ? instrumentKey : "piano",
   });
   if (!result.createdPart) return;
   state.parts = result.parts;
   state.assignments = result.assignments;
   state.activePartId = result.createdPart.id;
   state.selectedIds = new Set();
-  renderParts();
-  renderPartTabs();
-  updateSelectionUi();
-  refreshRoll();
-  scheduleRecalculation();
-  document.querySelector("#parts").scrollIntoView({ behavior: "smooth", block: "start" });
+  recalculate(false);
+  renderEditor();
+  scheduleSessionSave();
+  showEditorNotice(`選択した音を新しいパート「${result.createdPart.name}」へ移動しました。`);
 }
 
 function moveSelectedNotesToPart(partId) {
@@ -1217,24 +1394,20 @@ function moveSelectedNotesToPart(partId) {
   const targetPart = state.parts.find((part) => part.id === partId);
   if (!targetPart) {
     showEditorNotice("移動先のパートを選んでください。", "error");
-    updatePartDestinationControl();
     return;
   }
   const movableIds = new Set([...state.selectedIds].filter((id) => state.assignments[id] !== partId));
   if (movableIds.size === 0) {
     showEditorNotice(`選択ノートはすでに「${targetPart.name}」にあります。`, "error");
-    updatePartDestinationControl();
     return;
   }
   state.assignments = moveSelectionToPart(state.assignments, movableIds, partId);
   state.parts = deleteEmptyParts(state.parts, state.assignments);
   state.activePartId = partId;
   state.selectedIds = new Set();
-  renderParts();
-  renderPartTabs();
-  updateSelectionUi();
-  refreshRoll();
-  scheduleRecalculation();
+  recalculate(false);
+  renderEditor();
+  scheduleSessionSave();
   showEditorNotice(`${formatNumber(movableIds.size)}音を「${targetPart.name}」へ移動しました。`);
 }
 
@@ -1243,59 +1416,14 @@ function canMoveSelectionToPart(partId) {
   return [...state.selectedIds].some((id) => state.assignments[id] !== partId);
 }
 
-function updatePartDestinationControl() {
-  const select = document.querySelector("#existing-part-target");
-  const button = document.querySelector("#move-to-existing-part");
-  if (!select || !button) return;
-  const previous = select.value;
-  const candidates = state.selectedIds.size === 0
-    ? state.parts
-    : state.parts.filter((part) => canMoveSelectionToPart(part.id));
-  select.innerHTML = candidates.length > 0
-    ? candidates.map((part) => `<option value="${escapeAttribute(part.id)}">${escapeHtml(part.name)}</option>`).join("")
-    : '<option value="">移動先となる別パートがありません</option>';
-  if (candidates.some((part) => part.id === previous)) select.value = previous;
-  else {
-    const preferred = candidates.find((part) => part.id !== state.activePartId) || candidates[0];
-    select.value = preferred?.id || "";
-  }
-  select.disabled = candidates.length === 0;
-  button.disabled = state.selectedIds.size === 0 || candidates.length === 0;
-}
-
-function applySelectedNoteShift() {
-  if (state.selectedIds.size === 0) return;
-  const gridSteps = clampNumber(document.querySelector("#note-shift-grid").value, -256, 256, 0);
-  const pitchSteps = clampNumber(document.querySelector("#note-shift-pitch").value, -127, 127, 0);
-  if (gridSteps === 0 && pitchSteps === 0) {
-    showEditorNotice("時間移動または音程移動を指定してください。", "error");
-    return;
-  }
-  rebuildMidiNotes((note) => ({
-    ...note,
-    startMs: Math.max(0, note.startMs + gridSteps * gridStepMsAt(note.startMs)),
-    midi: Math.max(0, Math.min(127, note.midi + pitchSteps)),
-  }));
-  showEditorNotice(`${formatNumber(state.selectedIds.size)}音を移動しました。`);
-}
-
-function shiftSelectedNotes(gridSteps, pitchSteps) {
+function transposeSelectedNotes(pitchSteps) {
   if (state.selectedIds.size === 0) return;
   const count = state.selectedIds.size;
   rebuildMidiNotes((note) => ({
     ...note,
-    startMs: Math.max(0, note.startMs + gridSteps * gridStepMsAt(note.startMs)),
     midi: Math.max(0, Math.min(127, note.midi + pitchSteps)),
   }));
-  showEditorNotice(`${formatNumber(count)}音を${gridSteps ? `${signed(gridSteps)}マス` : ""}${gridSteps && pitchSteps ? "・" : ""}${pitchSteps ? `${signed(pitchSteps)}半音` : ""}移動しました。`);
-}
-
-function applySingleNoteEdit() {
-  if (state.selectedIds.size !== 1) return;
-  const timeMs = clampNumber(document.querySelector("#single-note-time").value, 0, Number.MAX_SAFE_INTEGER, 0);
-  const midiPitch = clampNumber(document.querySelector("#single-note-pitch").value, 0, 127, 60);
-  rebuildMidiNotes((note) => ({ ...note, startMs: timeMs, midi: midiPitch }));
-  showEditorNotice(`選択した1音を${Math.round(timeMs)} ms・${midiNoteName(midiPitch)}へ変更しました。`);
+  showEditorNotice(`${formatNumber(count)}音を${signed(pitchSteps)}半音移調しました。`);
 }
 
 function deleteSelectedNotes() {
@@ -1340,49 +1468,6 @@ function rebuildMidiNotes(transformSelected) {
   scheduleSessionSave();
 }
 
-function gridStepMsAt(timeMs) {
-  let tempo = state.midi.tempos?.[0] || { bpm: 120 };
-  for (const candidate of state.midi.tempos || []) {
-    if (candidate.timeMs > timeMs) break;
-    tempo = candidate;
-  }
-  return 60_000 / Math.max(1, tempo.bpm || 120) / Math.max(1, state.gridSubdivision);
-}
-
-function renderParts() {
-  const partList = document.querySelector("#part-list");
-  if (!partList) return;
-  const counts = new Map();
-  for (const partId of state.assignments) counts.set(partId, (counts.get(partId) || 0) + 1);
-  partList.innerHTML = state.parts.map((part, index) => `
-    <article class="part-card ${part.muted ? "is-muted" : ""}" data-part-id="${escapeAttribute(part.id)}">
-      <span class="part-color" style="--part-color:${part.color}"></span>
-      <div class="part-index">${String(index + 1).padStart(2, "0")}</div>
-      <div class="part-main">
-        <input class="part-name" data-action="name" type="text" maxlength="80" value="${escapeAttribute(part.name)}" aria-label="パート名" />
-        <span>${formatNumber(counts.get(part.id) || 0)} ノート</span>
-      </div>
-      <label class="part-control"><span>音ブロック楽器</span><select data-action="instrument">${instrumentOptions(part.instrumentKey)}</select></label>
-      <label class="part-control"><span>移調</span><span class="inline-field"><input data-action="transpose" type="number" min="-48" max="48" value="${part.transpose}" /> 半音</span></label>
-      <label class="part-control"><span>音量</span><span class="inline-field"><input data-action="volume" type="number" min="0" max="200" value="${part.volume}" /> %</span></label>
-      <label class="part-check"><input data-action="percussion" type="checkbox" ${part.percussion ? "checked" : ""} /><span>打楽器マップ</span></label>
-      <label class="part-check"><input data-action="mute" type="checkbox" ${part.muted ? "checked" : ""} /><span>ミュート</span></label>
-      <button type="button" data-action="edit-part" class="compact-button ${state.editorMode === "part" && state.activePartId === part.id ? "is-active" : ""}">このパートを編集</button>
-      <button type="button" data-action="move-selection" class="compact-button" ${canMoveSelectionToPart(part.id) ? "" : "disabled"}>選択音をここへ</button>
-    </article>
-  `).join("");
-
-  partList.querySelectorAll(".part-card").forEach((card) => {
-    const partId = card.dataset.partId;
-    card.addEventListener("input", (event) => updatePart(partId, event.target));
-    card.addEventListener("change", (event) => updatePart(partId, event.target));
-    card.querySelector('[data-action="edit-part"]').addEventListener("click", () => setActivePart(partId));
-    card.querySelector('[data-action="move-selection"]').addEventListener("click", () => {
-      moveSelectedNotesToPart(partId);
-    });
-  });
-}
-
 function updatePart(partId, target) {
   const action = target.dataset.action;
   if (!action || action === "move-selection" || action === "edit-part") return;
@@ -1398,8 +1483,7 @@ function updatePart(partId, target) {
     refreshRoll();
     scheduleRecalculation();
   } else {
-    renderPartTabs();
-    updatePartDestinationControl();
+    updateAutomationPartControl();
     scheduleSessionSave();
   }
 }
@@ -1446,6 +1530,14 @@ function renderConversion() {
     : "<span class=\"is-good\">変換上の大きな注意点はありません</span>";
   document.querySelector("#download-button").disabled = state.conversion.notes.length === 0;
   document.querySelector("#preview-button").disabled = state.conversion.notes.length === 0;
+  const pasteButton = document.querySelector("#generate-paste");
+  const pasteOutput = document.querySelector("#paste-output");
+  const pasteCommands = document.querySelector("#paste-commands");
+  const pasteStatus = document.querySelector("#paste-status");
+  if (pasteButton) pasteButton.disabled = state.conversion.notes.length === 0;
+  if (pasteOutput) pasteOutput.hidden = true;
+  if (pasteCommands) pasteCommands.value = "";
+  if (pasteStatus) pasteStatus.textContent = "専用コマンド列へ圧縮し、チェックサムで改変を検出します。";
   renderSchematicSummary();
   state.previewPositionMs = Math.min(state.previewPositionMs, metrics.durationMs);
   const seek = document.querySelector("#preview-seek");
@@ -1465,8 +1557,15 @@ async function togglePreview() {
     return;
   }
   if (state.previewPositionMs >= state.conversion.metrics.durationMs) setPreviewPosition(0);
-  await preview.play(state.conversion.notes, state.previewPositionMs);
-  updatePreviewButton(true);
+  const notes = previewNotes();
+  if (notes.length === 0) {
+    showEditorNotice("現在のパートには試聴できるノートがありません。", "error");
+    updatePreviewButton(false);
+    updateArrangeTransport();
+    return;
+  }
+  await preview.play(notes, state.previewPositionMs);
+  updatePreviewButton(preview.playing);
   updateArrangeTransport();
 }
 
@@ -1480,8 +1579,13 @@ async function seekAndMaybePlay(sourceTimeMs, shouldPlay = false) {
   const offset = state.conversion?.metrics.offsetMs || 0;
   setPreviewPosition(Math.max(0, Number(sourceTimeMs) - offset));
   if (shouldPlay || preview.playing) {
-    await preview.play(state.conversion.notes, state.previewPositionMs);
-    updatePreviewButton(true);
+    const notes = previewNotes();
+    if (notes.length === 0) {
+      stopPreview();
+      return;
+    }
+    await preview.play(notes, state.previewPositionMs);
+    updatePreviewButton(preview.playing);
     updateArrangeTransport();
   }
 }
@@ -1508,16 +1612,26 @@ function updatePreviewButton(playing) {
 function updateArrangeTransport() {
   const button = document.querySelector("#transport-play");
   const time = document.querySelector("#transport-time");
+  const bpmInput = document.querySelector("#transport-bpm-input");
   if (button) {
     button.textContent = preview.playing ? "❚❚" : "▶";
     button.classList.toggle("is-playing", preview.playing);
     button.setAttribute("aria-label", preview.playing ? "一時停止" : "再生");
   }
   if (time) time.textContent = formatTimeDetailed(previewSourceTime());
+  if (bpmInput && !bpmInput.matches(":focus")) {
+    bpmInput.value = Math.round(tempoAtTime(state.midi?.tempos || [], previewSourceTime(), state.midi?.ppq || 480).bpm);
+  }
 }
 
 function previewSourceTime() {
   return Math.max(0, state.previewPositionMs + (state.conversion?.metrics.offsetMs || 0));
+}
+
+function previewNotes() {
+  const notes = state.conversion?.notes || [];
+  if (state.editorMode !== "part" || !state.activePartId) return notes;
+  return notes.filter((note) => note.partId === state.activePartId);
 }
 
 async function previewPianoKey(midiPitch) {
@@ -1543,6 +1657,50 @@ function downloadPackage() {
   });
   const baseName = (state.title || state.midi.title || "ommt-export").trim();
   downloadBlob(blob, `${baseName}.oyasai`);
+}
+
+async function generatePasteTransfer() {
+  const button = document.querySelector("#generate-paste");
+  const status = document.querySelector("#paste-status");
+  const output = document.querySelector("#paste-output");
+  const textarea = document.querySelector("#paste-commands");
+  if (!button || !status || !output || !textarea || !state.conversion?.notes?.length) return;
+  button.disabled = true;
+  output.hidden = true;
+  status.textContent = "ブラウザ内で圧縮し、SHA-256チェックサムを計算しています…";
+  try {
+    const blob = encodeOyasaiPackage({
+      midi: state.midi,
+      conversion: state.conversion,
+      parts: state.parts,
+      settings: state.settings,
+      title: state.title,
+    });
+    const transfer = await encodePasteCommands(blob);
+    textarea.value = transfer.text;
+    output.hidden = false;
+    status.textContent = `${formatBytes(transfer.originalBytes)}を${formatBytes(transfer.compressedBytes)}へ圧縮しました。全${formatNumber(transfer.commands.length)}行（データ${formatNumber(transfer.chunkCount)}分割）です。`;
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : "コピペ用データを作成できませんでした。";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyPasteCommands() {
+  const textarea = document.querySelector("#paste-commands");
+  if (!textarea?.value) return;
+  try {
+    await navigator.clipboard.writeText(textarea.value);
+  } catch {
+    textarea.focus();
+    textarea.select();
+    if (!document.execCommand("copy")) {
+      showEditorNotice("自動コピーできませんでした。文字列を選択してコピーしてください。", "error");
+      return;
+    }
+  }
+  showEditorNotice("Minecraftへ貼り付けるコマンド列をコピーしました。");
 }
 
 function renderSchematicSummary() {
@@ -1624,11 +1782,6 @@ function partControlOptions() {
   return state.parts.map((part) => `<option value="${escapeAttribute(part.id)}" ${part.id === state.activePartId ? "selected" : ""}>${escapeHtml(part.name)}</option>`).join("");
 }
 
-function partDestinationOptions() {
-  if (state.parts.length === 0) return '<option value="">移動先となる別パートがありません</option>';
-  return state.parts.map((part) => `<option value="${escapeAttribute(part.id)}">${escapeHtml(part.name)}</option>`).join("");
-}
-
 function automationLaneTabs() {
   return Object.entries(AUTOMATION_LANES).map(([key, lane]) => `
     <button type="button" role="tab" data-automation-lane="${key}" class="automation-tab ${state.automationLane === key ? "is-active" : ""}" aria-selected="${state.automationLane === key}">${lane.label}</button>
@@ -1646,17 +1799,6 @@ function horizontalScrollValue() {
   const span = Math.min(fullDuration, Math.max(1, state.view.endMs - state.view.startMs));
   const maximumStart = Math.max(0, fullDuration - span);
   return maximumStart > 0 ? Math.round((state.view.startMs / maximumStart) * 1000) : 0;
-}
-
-function partEditorTabs() {
-  const counts = new Map();
-  for (const partId of state.assignments) counts.set(partId, (counts.get(partId) || 0) + 1);
-  if (state.parts.length === 0) return '<span class="empty-part-tabs">編集できるパートがありません</span>';
-  return state.parts.map((part) => `
-    <button type="button" data-edit-part="${escapeAttribute(part.id)}" class="part-tab ${state.activePartId === part.id ? "is-active" : ""}" style="--part-color:${part.color}">
-      <span></span><strong>${escapeHtml(part.name)}</strong><small>${formatNumber(counts.get(part.id) || 0)}音</small>
-    </button>
-  `).join("");
 }
 
 function summaryStat(label, value) {
@@ -1711,11 +1853,6 @@ function formatTimeDetailed(ms) {
 function clampNumber(value, min, max, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
-}
-
-function round(value, digits) {
-  const scale = 10 ** digits;
-  return Math.round(value * scale) / scale;
 }
 
 function signed(value) {

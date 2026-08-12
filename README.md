@@ -58,6 +58,8 @@ plugins/OyasaiMusic/
 `/demosound` のピッチはノートブロックと同じ `0`〜`24` です。TAB 補完ではカタログに登録済みの
 SoundEvent、存在するパターン、ピッチ候補だけが表示されます。実行後の `ID x.x.x:n` はクリックでコピーできます。
 
+OMMTの検証付きコピペ取り込みでは、サイトが出力した`/mm paste begin …`、`/mm paste add …`、`/mm paste finish`を上から順に実行します。`oyasaimusic.import`権限が必要です。転送は10分で期限切れになり、`/mm paste cancel`で破棄できます。受信データはSHA-256、Base64URL文字種、gzip展開前後のサイズ、`.oyasai`形式を検証し、任意コードの実行や任意パスへのファイル保存は行いません。従来の`/mm import <ファイル名.oyasai>`も引き続き利用できます。
+
 ## プレイヤー向けの使い方
 
 ### 楽曲を探して再生する

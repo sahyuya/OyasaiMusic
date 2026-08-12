@@ -45,7 +45,8 @@ class MusicMenuCommand(private val plugin: OyasaiMusic) : CommandExecutor, TabCo
             plugin.playbackController.play(player, song)
           }
       "import" -> importOyasaiFile(player, args.getOrNull(1))
-      else -> player.sendMessage("§e/mm [play|open] <楽曲ID> §7または §e/mm import <ファイル名>")
+      "paste" -> handlePaste(player, args.drop(1))
+      else -> player.sendMessage("§e/mm [play|open] <楽曲ID> §7または §e/mm import <ファイル名> §7または §e/mm paste …")
     }
     return true
   }
@@ -77,7 +78,7 @@ class MusicMenuCommand(private val plugin: OyasaiMusic) : CommandExecutor, TabCo
                           player.sendMessage(
                               "§aOMMTから${result.noteCount}音をインポートし、非公開の下書きとして保存しました。"
                           )
-                          if (!result.sourceMoved) {
+                          if (result.sourceMoved == false) {
                             player.sendMessage("§e元ファイルをprocessedへ移動できなかったため、同じファイルを再実行しないでください。")
                           }
                           plugin.menuManager.open(
@@ -95,6 +96,85 @@ class MusicMenuCommand(private val plugin: OyasaiMusic) : CommandExecutor, TabCo
                         Runnable {
                           if (!player.isOnline) return@Runnable
                           player.sendMessage("§cインポートできませんでした: ${error.message ?: "不明なエラー"}")
+                        },
+                    )
+              }
+            },
+        )
+  }
+
+  private fun handlePaste(player: Player, args: List<String>) {
+    if (!player.hasPermission("oyasaimusic.import")) {
+      player.sendMessage("§cOMMTデータをインポートする権限がありません。")
+      return
+    }
+    try {
+      when (args.firstOrNull()?.lowercase()) {
+        "begin" -> {
+          val count = args.getOrNull(1)?.toIntOrNull()
+              ?: throw IllegalArgumentException("分割数を指定してください。")
+          val checksum = args.getOrNull(2).orEmpty()
+          plugin.oyasaiPasteTransferService.begin(player.uniqueId, count, checksum)
+          player.sendMessage("§aOMMTコピペ転送を開始しました。§7 0/$count")
+        }
+        "add" -> {
+          val index = args.getOrNull(1)?.toIntOrNull()
+              ?: throw IllegalArgumentException("分割番号を指定してください。")
+          val chunk = args.getOrNull(2).orEmpty()
+          val (received, expected) = plugin.oyasaiPasteTransferService.add(player.uniqueId, index, chunk)
+          if (received == expected || received == 1 || received % 100 == 0) {
+            player.sendMessage("§7OMMTデータ受信: $received/$expected")
+          }
+        }
+        "finish" -> finishPasteImport(player)
+        "cancel" -> {
+          if (plugin.oyasaiPasteTransferService.cancel(player.uniqueId)) {
+            player.sendMessage("§eOMMTコピペ転送を取り消しました。")
+          } else {
+            player.sendMessage("§7進行中のOMMTコピペ転送はありません。")
+          }
+        }
+        else -> player.sendMessage("§e/mm paste begin <分割数> <SHA-256> §7→ §e/mm paste add <番号> <データ> §7→ §e/mm paste finish")
+      }
+    } catch (error: IllegalArgumentException) {
+      player.sendMessage("§cコピペデータを受け取れませんでした: ${error.message ?: "入力が不正です。"}")
+    }
+  }
+
+  private fun finishPasteImport(player: Player) {
+    val transfer = plugin.oyasaiPasteTransferService.seal(player.uniqueId)
+    val authorUuid = player.uniqueId
+    val authorName = player.name
+    player.sendMessage("§7受信データを検証しています。曲が長い場合は完了までお待ちください。")
+    Bukkit.getScheduler()
+        .runTaskAsynchronously(
+            plugin,
+            Runnable {
+              try {
+                val bytes = plugin.oyasaiPasteTransferService.decode(transfer)
+                val result = plugin.oyasaiImportService.importBytesFor(authorUuid, authorName, bytes)
+                Bukkit.getScheduler()
+                    .runTask(
+                        plugin,
+                        Runnable {
+                          if (!player.isOnline) return@Runnable
+                          player.sendMessage("§aOMMTのコピペデータから${result.noteCount}音をインポートし、非公開の下書きとして保存しました。")
+                          plugin.menuManager.open(
+                              player,
+                              SongSettingsScreen(plugin, plugin.menuManager, player, result.song),
+                              rememberAsPrevious = false,
+                          )
+                        },
+                    )
+              } catch (error: Exception) {
+                plugin.logger.warning("OMMTコピペインポートに失敗しました (${player.name}): ${error.message}")
+                Bukkit.getScheduler()
+                    .runTask(
+                        plugin,
+                        Runnable {
+                          if (player.isOnline) {
+                            player.sendMessage("§cコピペデータをインポートできませんでした: ${error.message ?: "不明なエラー"}")
+                          }
                         },
                     )
               }
@@ -141,12 +221,16 @@ class MusicMenuCommand(private val plugin: OyasaiMusic) : CommandExecutor, TabCo
                   add("play")
                   add("open")
                   if (sender.hasPermission("oyasaimusic.import")) add("import")
+                  if (sender.hasPermission("oyasaimusic.import")) add("paste")
                 }
                 .filter { it.startsWith(args[0], true) }
         2 ->
             if (args[0].equals("import", ignoreCase = true) &&
                 sender.hasPermission("oyasaimusic.import")) {
               plugin.oyasaiImportService.availableFiles(args[1])
+            } else if (args[0].equals("paste", ignoreCase = true) &&
+                sender.hasPermission("oyasaimusic.import")) {
+              listOf("begin", "add", "finish", "cancel").filter { it.startsWith(args[1], true) }
             } else {
               emptyList()
             }

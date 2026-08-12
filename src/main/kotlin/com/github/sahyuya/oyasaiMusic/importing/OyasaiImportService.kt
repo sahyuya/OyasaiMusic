@@ -23,7 +23,7 @@ class OyasaiImportService(private val plugin: OyasaiMusic) {
   data class ImportResult(
       val song: Song,
       val noteCount: Int,
-      val sourceMoved: Boolean,
+      val sourceMoved: Boolean?,
   )
 
   fun availableFiles(prefix: String = ""): List<String> =
@@ -43,40 +43,50 @@ class OyasaiImportService(private val plugin: OyasaiMusic) {
     require(importingFiles.add(source.name)) { "このファイルは別のプレイヤーがインポート中です。" }
     try {
       val imported = OyasaiMidiImportFile.read(source)
-      require(imported.notes.isNotEmpty()) { "インポートできるノートがありません。" }
-
-      val authorDirectory =
-          authorName.removePrefix(".").replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank {
-            authorUuid.toString()
-          }
-      val relativeAudioName = "$authorDirectory/${UUID.randomUUID()}.bin"
-      val audioFile = File(plugin.audioDirectory, relativeAudioName)
-      var songId: Long? = null
-      try {
-        SongAudioFile.write(audioFile, imported.notes)
-        songId =
-            plugin.songRepository.insertDraft(
-                authorUuid = authorUuid,
-                title = imported.title,
-                bpm = imported.bpm,
-                recordMaterial =
-                    plugin.config.getString("recording.default-record-material", "MUSIC_DISC_13")
-                        ?: "MUSIC_DISC_13",
-                price = plugin.config.getInt("recording.default-price", 1000),
-                fileName = relativeAudioName,
-                supportsPositional = imported.notes.any { it.pan != 0 },
-            )
-        val savedSong = plugin.songRepository.findById(songId)
-            ?: throw IllegalStateException("保存した楽曲を再取得できませんでした。")
-        val moved = moveToProcessed(source)
-        return ImportResult(savedSong, imported.notes.size, moved)
-      } catch (error: Exception) {
-        if (songId != null) plugin.songRepository.delete(songId)
-        Files.deleteIfExists(audioFile.toPath())
-        throw error
-      }
+      val result = persistImported(authorUuid, authorName, imported)
+      return result.copy(sourceMoved = moveToProcessed(source))
     } finally {
       importingFiles.remove(source.name)
+    }
+  }
+
+  fun importBytesFor(authorUuid: UUID, authorName: String, bytes: ByteArray): ImportResult =
+      persistImported(authorUuid, authorName, OyasaiMidiImportFile.read(bytes))
+
+  private fun persistImported(
+      authorUuid: UUID,
+      authorName: String,
+      imported: OyasaiMidiImportFile.ImportedSong,
+  ): ImportResult {
+    require(imported.notes.isNotEmpty()) { "インポートできるノートがありません。" }
+    val authorDirectory =
+        authorName.removePrefix(".").replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank {
+          authorUuid.toString()
+        }
+    val relativeAudioName = "$authorDirectory/${UUID.randomUUID()}.bin"
+    val audioFile = File(plugin.audioDirectory, relativeAudioName)
+    var songId: Long? = null
+    try {
+      SongAudioFile.write(audioFile, imported.notes)
+      songId =
+          plugin.songRepository.insertDraft(
+              authorUuid = authorUuid,
+              title = imported.title,
+              bpm = imported.bpm,
+              recordMaterial =
+                  plugin.config.getString("recording.default-record-material", "MUSIC_DISC_13")
+                      ?: "MUSIC_DISC_13",
+              price = plugin.config.getInt("recording.default-price", 1000),
+              fileName = relativeAudioName,
+              supportsPositional = imported.notes.any { it.pan != 0 },
+          )
+      val savedSong = plugin.songRepository.findById(songId)
+          ?: throw IllegalStateException("保存した楽曲を再取得できませんでした。")
+      return ImportResult(savedSong, imported.notes.size, null)
+    } catch (error: Exception) {
+      if (songId != null) plugin.songRepository.delete(songId)
+      Files.deleteIfExists(audioFile.toPath())
+      throw error
     }
   }
 

@@ -9,6 +9,7 @@ export class PianoRoll {
     onSeek = () => {},
     onNavigate = () => {},
     onKeyboardPreview = () => {},
+    onContextMenu = () => {},
     getColor,
     getSelected,
   }) {
@@ -18,6 +19,7 @@ export class PianoRoll {
     this.onSeek = onSeek;
     this.onNavigate = onNavigate;
     this.onKeyboardPreview = onKeyboardPreview;
+    this.onContextMenu = onContextMenu;
     this.getColor = getColor;
     this.getSelected = getSelected;
     this.notes = [];
@@ -38,7 +40,7 @@ export class PianoRoll {
     canvas.addEventListener("pointerup", (event) => this.pointerUp(event));
     canvas.addEventListener("pointercancel", () => { this.drag = null; this.draw(); });
     canvas.addEventListener("wheel", (event) => this.wheel(event), { passive: false });
-    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    canvas.addEventListener("contextmenu", (event) => this.contextMenu(event));
   }
 
   setData(notes, view, {
@@ -308,7 +310,7 @@ export class PianoRoll {
   pointerDown(event) {
     const point = this.point(event);
     this.canvas.setPointerCapture(event.pointerId);
-    if (event.button === 1) {
+    if (event.button === 0 && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       this.drag = { mode: "pan", startX: point.x, startY: point.y, currentX: point.x, currentY: point.y };
       this.canvas.classList.add("is-panning");
@@ -333,7 +335,7 @@ export class PianoRoll {
       startY: point.y,
       currentX: point.x,
       currentY: point.y,
-      additive: event.shiftKey || event.ctrlKey || event.metaKey,
+      additive: event.shiftKey,
     };
   }
 
@@ -411,6 +413,21 @@ export class PianoRoll {
     } else {
       this.onNavigate({ type: "scroll-pitch", direction, amount: event.deltaY || event.deltaX });
     }
+  }
+
+  contextMenu(event) {
+    event.preventDefault();
+    if (!this.plot) return;
+    const point = this.point(event);
+    if (!contains(this.plot, point)) return;
+    const hit = [...this.visibleNotes].reverse().find((region) => contains(region, point));
+    let selected = new Set(this.getSelected());
+    if (hit && !selected.has(hit.id)) {
+      selected = new Set([hit.id]);
+      this.onSelectionChange(selected);
+    }
+    if (!hit && selected.size === 0) return;
+    this.onContextMenu({ clientX: event.clientX, clientY: event.clientY, noteId: hit?.id ?? null });
   }
 
   point(event) {

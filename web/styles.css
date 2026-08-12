@@ -686,6 +686,7 @@ button:disabled {
 }
 
 .daw-workspace {
+  position: relative;
   border-color: #343943;
   background: #1c1f26;
   box-shadow: 0 24px 70px rgb(0 0 0 / 30%);
@@ -694,7 +695,10 @@ button:disabled {
 
 .daw-commandbar {
   display: grid;
-  grid-template-columns: minmax(230px, 1fr) auto minmax(260px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "track transport"
+    "tools tools";
   min-height: 62px;
   align-items: stretch;
   border-bottom: 1px solid #373c46;
@@ -711,7 +715,9 @@ button:disabled {
 }
 
 .track-strip {
+  grid-area: track;
   min-width: 0;
+  overflow-x: auto;
 }
 
 .track-color {
@@ -754,7 +760,77 @@ button:disabled {
   font-weight: 700;
 }
 
+.active-part-controls {
+  display: flex;
+  min-width: 0;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.compact-field {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.1rem;
+}
+
+.compact-field.name {
+  width: 8.5rem;
+}
+
+.compact-field.instrument {
+  width: 9rem;
+}
+
+.compact-field.number {
+  width: 3.8rem;
+}
+
+.compact-field input,
+.compact-field select,
+.transport-bpm input {
+  min-width: 0;
+  border: 1px solid #3d424d;
+  border-radius: 4px;
+  background: #181b21;
+  color: #edf0f5;
+  padding: 0.3rem 0.38rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.compact-field input,
+.compact-field select {
+  width: 100%;
+}
+
+.compact-toggle {
+  display: flex !important;
+  flex: 0 0 auto;
+  gap: 0.25rem !important;
+  align-items: center;
+  color: #aeb4c0;
+  font-size: 0.6rem;
+  white-space: nowrap;
+}
+
+.compact-toggle input {
+  accent-color: #7cac42;
+}
+
+.selection-readout {
+  flex: 0 0 auto;
+  color: #8e96a4;
+  font-family: var(--font-mono);
+  font-size: 0.61rem;
+  white-space: nowrap;
+}
+
+.selection-readout b {
+  color: #c9f486;
+}
+
 .arrange-transport {
+  grid-area: transport;
   justify-content: center;
   border-right: 1px solid #343943;
   border-left: 1px solid #343943;
@@ -820,8 +896,31 @@ button:disabled {
   font-size: 0.52rem;
 }
 
+.transport-bpm input {
+  width: 4.4rem;
+  text-align: right;
+}
+
+.transport-button.wide {
+  width: auto;
+  padding-inline: 0.55rem;
+}
+
 .edit-tools {
+  grid-area: tools;
   justify-content: flex-end;
+  border-top: 1px solid #343943;
+}
+
+@media (min-width: 1600px) {
+  .daw-commandbar {
+    grid-template-columns: minmax(650px, 1fr) auto auto;
+    grid-template-areas: "track transport tools";
+  }
+
+  .edit-tools {
+    border-top: 0;
+  }
 }
 
 .tool-button {
@@ -854,6 +953,7 @@ button:disabled {
 .roll-viewport {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 22px;
+  height: var(--roll-height, 480px);
   background: #111318;
 }
 
@@ -943,8 +1043,8 @@ button:disabled {
 .piano-roll {
   display: block;
   width: 100%;
-  height: clamp(420px, 50vw, 570px);
-  min-height: 420px;
+  height: var(--roll-height, 480px);
+  min-height: 0;
   cursor: crosshair;
   touch-action: none;
 }
@@ -1019,8 +1119,7 @@ button:disabled {
 .automation-canvas {
   display: block;
   width: calc(100% - 22px);
-  min-height: 110px;
-  max-height: 320px;
+  height: 170px;
   cursor: default;
   touch-action: none;
 }
@@ -1074,6 +1173,223 @@ button:disabled {
 .daw-shortcuts .fsharp-key {
   margin-left: auto;
   color: #b9e769;
+}
+
+.note-context-menu {
+  position: absolute;
+  z-index: 30;
+  width: min(290px, calc(100% - 16px));
+  max-height: min(560px, calc(100% - 16px));
+  overflow: auto;
+  border: 1px solid #4b5361;
+  border-radius: 9px;
+  background: #252932;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 55%);
+  color: #e9ecf2;
+  padding: 0.45rem;
+}
+
+.note-context-menu[hidden] {
+  display: none;
+}
+
+.note-context-menu header,
+.editor-dialog header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.note-context-menu header {
+  border-bottom: 1px solid #3c424d;
+  padding: 0.35rem 0.4rem 0.55rem;
+  font-size: 0.73rem;
+}
+
+.note-context-menu button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #dce1e9;
+  padding: 0.48rem 0.55rem;
+  text-align: left;
+}
+
+.note-context-menu button:hover:not(:disabled) {
+  background: #343a46;
+  color: #ffffff;
+}
+
+.note-context-menu details {
+  border-bottom: 1px solid #373d47;
+  padding: 0.3rem 0;
+}
+
+.note-context-menu summary {
+  cursor: pointer;
+  color: #9fa7b5;
+  padding: 0.4rem;
+  font-size: 0.67rem;
+}
+
+.context-action-list {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.context-action-list button {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.context-action-list i {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--part-color);
+}
+
+.context-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.25rem;
+}
+
+.context-empty {
+  color: #858d9b;
+  padding: 0.45rem;
+  font-size: 0.65rem;
+}
+
+.note-context-menu .context-danger {
+  width: 100%;
+  margin-top: 0.35rem;
+  color: #ff9b9b;
+}
+
+.editor-dialog {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid #4a5260;
+  border-radius: 12px;
+  background: #242831;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 65%);
+  color: #edf0f5;
+  padding: 0;
+}
+
+.editor-dialog::backdrop {
+  background: rgb(5 7 10 / 72%);
+  backdrop-filter: blur(2px);
+}
+
+.editor-dialog form {
+  display: grid;
+  gap: 1rem;
+  padding: 1.1rem;
+}
+
+.editor-dialog h3,
+.editor-dialog p {
+  margin: 0;
+}
+
+.editor-dialog header > button,
+.tempo-event-row > button {
+  border: 0;
+  background: transparent;
+  color: #abb2bf;
+  font-size: 1.1rem;
+}
+
+.editor-dialog > form > label {
+  display: grid;
+  gap: 0.35rem;
+  color: #9ba3b0;
+  font-size: 0.7rem;
+}
+
+.editor-dialog input,
+.editor-dialog select {
+  width: 100%;
+  border: 1px solid #444b57;
+  border-radius: 6px;
+  background: #171a20;
+  color: #edf0f5;
+  padding: 0.65rem;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+
+.tempo-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.tempo-dialog header small {
+  color: #8fa2c9;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+}
+
+.tempo-dialog p {
+  color: #9ba3b0;
+  font-size: 0.72rem;
+}
+
+.tempo-event-list {
+  display: grid;
+  max-height: min(440px, 55vh);
+  gap: 0.4rem;
+  overflow: auto;
+}
+
+.tempo-event-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) 120px 32px;
+  gap: 0.6rem;
+  align-items: center;
+  border: 1px solid #3c424d;
+  border-radius: 8px;
+  background: #1c1f26;
+  padding: 0.55rem 0.65rem;
+}
+
+.tempo-event-row > div {
+  display: grid;
+}
+
+.tempo-event-row small,
+.tempo-event-row label span {
+  color: #858d9b;
+  font-size: 0.58rem;
+}
+
+.tempo-event-row label {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.tempo-event-row > button:disabled {
+  opacity: 0.2;
+}
+
+.daw-workspace:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+}
+
+.daw-workspace:fullscreen .roll-viewport,
+.daw-workspace:fullscreen .piano-roll {
+  height: min(var(--roll-height, 480px), calc(100vh - 340px));
 }
 
 .selection-grid,
@@ -1538,6 +1854,46 @@ button:disabled {
   font-size: 1.4rem;
 }
 
+.paste-export {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+  border: 1px solid #374333;
+  border-radius: 10px;
+  background: #131810;
+  padding: 0.85rem;
+}
+
+.paste-export > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.paste-export textarea {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  border: 1px solid #41493d;
+  border-radius: 7px;
+  background: #090c08;
+  color: #cce8aa;
+  padding: 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.61rem;
+  line-height: 1.55;
+}
+
+.paste-export .button-row {
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+}
+
+.paste-export .button-row span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
 .schematic-card {
   margin-top: 1rem;
   border: 1px solid #405032;
@@ -1906,6 +2262,10 @@ footer {
 
   .daw-commandbar {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "transport"
+      "track"
+      "tools";
   }
 
   .arrange-transport {
@@ -1920,7 +2280,7 @@ footer {
   }
 
   .piano-roll {
-    height: 440px;
+    height: var(--roll-height, 440px);
   }
 
   .automation-header {
