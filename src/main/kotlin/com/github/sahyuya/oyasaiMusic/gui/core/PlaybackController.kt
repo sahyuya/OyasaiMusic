@@ -1,7 +1,9 @@
 package com.github.sahyuya.oyasaiMusic.gui
 
 import com.github.sahyuya.oyasaiMusic.OyasaiMusic
+import com.github.sahyuya.oyasaiMusic.audio.PlaybackMode
 import com.github.sahyuya.oyasaiMusic.audio.SongAudioFile
+import com.github.sahyuya.oyasaiMusic.interop.PlaybackBuffer
 import com.github.sahyuya.oyasaiMusic.model.Song
 import java.io.File
 import java.util.UUID
@@ -78,50 +80,59 @@ class PlaybackController(private val plugin: OyasaiMusic, private val menuManage
                     .runTask(plugin, Runnable { viewer.sendMessage("§7この楽曲には再生できる音符がありません。") })
                 return@Runnable
               }
+              val prepared = PlaybackBuffer.prepare(audio.notes)
               Bukkit.getScheduler()
                   .runTask(
                       plugin,
                       Runnable {
-                        val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                        // 既に再生中のセッションがあれば止める（多重再生防止）。
-                        state.activeSession?.let { plugin.playbackEngine.stop(it) }
-                        hideNowPlayingBar(viewer)
-
                         val mode = plugin.playbackModeService.resolve(viewer.uniqueId, song)
-                        val session =
-                            plugin.playbackEngine.play(
-                                song = song,
-                                notes = audio.notes,
-                                recipients = listOf(viewer),
-                                mode = mode,
-                                onListenThresholdReached = { player, s ->
-                                  plugin.viewCountService.registerView(
-                                      player,
-                                      s,
-                                      isAmbientPlayback = false,
-                                  ) {
-                                    // 視聴回数がDBへ実際に記録できた時点でGUIを再描画し、
-                                    // 一覧等の「再生数」表示が最新化されるようにする。
-                                    menuManager.refreshCurrent(player.uniqueId)
-                                  }
-                                },
-                                onCompletion = { finishedSession ->
-                                  val s2 = plugin.controllerStateService.stateFor(viewer.uniqueId)
-                                  if (s2.activeSession?.sessionId == finishedSession.sessionId) {
-                                    s2.isPlaying = false
-                                    s2.activeSession = null
-                                    hideNowPlayingBar(viewer)
-                                    menuManager.refreshCurrent(viewer.uniqueId)
-                                    onCompletion?.invoke()
-                                  }
-                                },
-                            )
-                        state.isPlaying = true
-                        state.nowPlayingSong = song
-                        state.activeSession = session
-                        showNowPlayingBar(viewer, song, session, audio.totalDurationMs)
-                        if (rememberInHistory) rememberSong(state, song)
-                        menuManager.refreshCurrent(viewer.uniqueId)
+                        val startPlayback: (Boolean) -> Unit = startPlayback@ { useBufferedRoute ->
+                          if (!viewer.isOnline) return@startPlayback
+                          val state = plugin.controllerStateService.stateFor(viewer.uniqueId)
+                          // 既に再生中のセッションがあれば止める（多重再生防止）。
+                          state.activeSession?.let { plugin.playbackEngine.stop(it) }
+                          hideNowPlayingBar(viewer)
+                          val session =
+                              plugin.playbackEngine.play(
+                                  song = song,
+                                  notes = audio.notes,
+                                  recipients = listOf(viewer),
+                                  mode = mode,
+                                  prepared = prepared.takeIf { useBufferedRoute },
+                                  onListenThresholdReached = { player, s ->
+                                    plugin.viewCountService.registerView(
+                                        player,
+                                        s,
+                                        isAmbientPlayback = false,
+                                    ) {
+                                      // 視聴回数がDBへ実際に記録できた時点でGUIを再描画し、
+                                      // 一覧等の「再生数」表示が最新化されるようにする。
+                                      menuManager.refreshCurrent(player.uniqueId)
+                                    }
+                                  },
+                                  onCompletion = { finishedSession ->
+                                    val s2 = plugin.controllerStateService.stateFor(viewer.uniqueId)
+                                    if (s2.activeSession?.sessionId == finishedSession.sessionId) {
+                                      s2.isPlaying = false
+                                      s2.activeSession = null
+                                      hideNowPlayingBar(viewer)
+                                      menuManager.refreshCurrent(viewer.uniqueId)
+                                      onCompletion?.invoke()
+                                    }
+                                  },
+                              )
+                          state.isPlaying = true
+                          state.nowPlayingSong = song
+                          state.activeSession = session
+                          showNowPlayingBar(viewer, song, session, audio.totalDurationMs)
+                          if (rememberInHistory) rememberSong(state, song)
+                          menuManager.refreshCurrent(viewer.uniqueId)
+                        }
+                        if (mode == PlaybackMode.DEFAULT) {
+                          plugin.oyasaiClientCommand.resolveForPlayback(viewer, startPlayback)
+                        } else {
+                          startPlayback(false)
+                        }
                       },
                   )
             },

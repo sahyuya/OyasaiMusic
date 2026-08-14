@@ -173,10 +173,10 @@ class MusicMenuCommand(private val plugin: OyasaiMusic) : CommandExecutor, TabCo
             )
             .build()
     val input =
-        DialogInput.text(PASTE_INPUT_KEY, Component.text("OMMTサイトでコピーしたデータ"))
+        DialogInput.text(PASTE_INPUT_KEY, Component.text("OMMTサイトでコピーしたデータa"))
             .width(500)
             .maxLength(OyasaiPasteTransferService.MAX_DIALOG_INPUT_CHARACTERS)
-            .multiline(TextDialogInput.MultilineOptions.create(8, 180))
+            .multiline(TextDialogInput.MultilineOptions.create(null, null))
             .build()
     val base =
         DialogBase.builder(Component.text("OyasaiMusicMidiTranslator", NamedTextColor.GREEN))

@@ -13,6 +13,8 @@ import com.github.sahyuya.oyasaiMusic.command.DemoSoundCommand
 import com.github.sahyuya.oyasaiMusic.command.GetMusicPlayerCommand
 import com.github.sahyuya.oyasaiMusic.command.MusicMenuCommand
 import com.github.sahyuya.oyasaiMusic.command.OyasaiMusicCommand
+import com.github.sahyuya.oyasaiMusic.command.OyasaiUploadCommand
+import com.github.sahyuya.oyasaiMusic.command.OyasaiClientCommand
 import com.github.sahyuya.oyasaiMusic.command.RecordCommand
 import com.github.sahyuya.oyasaiMusic.db.DatabaseManager
 import com.github.sahyuya.oyasaiMusic.db.LikeService
@@ -114,6 +116,11 @@ class OyasaiMusic : JavaPlugin() {
   lateinit var oyasaiPasteTransferService: OyasaiPasteTransferService
     private set
 
+  lateinit var oyasaiUploadCommand: OyasaiUploadCommand
+    private set
+  lateinit var oyasaiClientCommand: OyasaiClientCommand
+    private set
+
   override fun onEnable() {
     // --- FAWE必須依存チェック（plugin.ymlのdependでも保証されるが、明示的なメッセージを出すため二重チェック） ---
     if (server.pluginManager.getPlugin("FastAsyncWorldEdit") == null) {
@@ -147,6 +154,11 @@ class OyasaiMusic : JavaPlugin() {
     rankingRepository = RankingRepository(databaseManager)
     oyasaiImportService = OyasaiImportService(this)
     oyasaiPasteTransferService = OyasaiPasteTransferService()
+    oyasaiUploadCommand = OyasaiUploadCommand(this)
+    oyasaiClientCommand = OyasaiClientCommand(this)
+    server.pluginManager.registerEvents(oyasaiUploadCommand, this)
+    server.pluginManager.registerEvents(oyasaiClientCommand, this)
+    Bukkit.getScheduler().runTaskTimer(this, Runnable { oyasaiUploadCommand.expire() }, 20L * 15, 20L * 15)
 
     // --- サービス層 ---
     configureRuntimeServices()
@@ -216,6 +228,11 @@ class OyasaiMusic : JavaPlugin() {
       cmd.tabCompleter = executor
     } ?: logger.warning("demosoundコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
 
+    getCommand("ommtupload")?.setExecutor(oyasaiUploadCommand)
+        ?: logger.warning("ommtuploadコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+    getCommand("ommtclient")?.setExecutor(oyasaiClientCommand)
+        ?: logger.warning("ommtclientコマンドの登録に失敗しました（plugin.ymlを確認してください）。")
+
     // 環境BGMレコードのトリガー監視。
     ambientPlaybackRegistry = AmbientPlaybackRegistry(this)
     server.pluginManager.registerEvents(PhysicalRecordListener(this), this)
@@ -227,14 +244,24 @@ class OyasaiMusic : JavaPlugin() {
   }
 
   override fun onDisable() {
+    // This can block the Paper main thread for at most ten seconds while an already-entered
+    // importer drains. A timeout deliberately keeps the DB open: closing it would race import.
+    val uploadsDrained = !::oyasaiUploadCommand.isInitialized || oyasaiUploadCommand.shutdown()
     if (::ambientPlaybackRegistry.isInitialized) ambientPlaybackRegistry.stopAll()
     if (::playbackEngine.isInitialized) playbackEngine.shutdown()
-    if (::databaseManager.isInitialized) databaseManager.close()
+    // PlaybackEngine sends STOP while the S2C channel is still registered; only then discard
+    // capability generations and unregister the outgoing channel.
+    if (::oyasaiClientCommand.isInitialized) oyasaiClientCommand.clear()
+    if (::databaseManager.isInitialized) {
+      if (uploadsDrained) databaseManager.close()
+      else logger.severe("DB close skipped because import still running; server shutdown may leave this plugin's DB connection open")
+    }
     logger.info("OyasaiMusicを無効化しました。")
   }
 
   /** `/oyasaimusic reload` 用。設定値を参照するサービスを現在のconfigで再構成する。 */
   fun reloadRuntimeConfiguration() {
+    if (::oyasaiUploadCommand.isInitialized) oyasaiUploadCommand.reloadReset()
     reloadConfig()
     val soundCatalogCount = VanillaSoundCatalog.reload(this)
     logger.info("サウンドカタログを再読み込みしました: $soundCatalogCount SoundEvent")
@@ -243,6 +270,7 @@ class OyasaiMusic : JavaPlugin() {
       val previous = playbackEngine
       playbackEngine = createPlaybackEngine()
       previous.shutdown()
+      if (::oyasaiClientCommand.isInitialized) oyasaiClientCommand.invalidateCapabilities()
     }
   }
 
